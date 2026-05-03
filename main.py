@@ -719,7 +719,9 @@ def run_cron_bot(settings: Settings) -> None:
 
     logging.info("Buscando partidas de %s", settings.target_date)
     try:
+        logging.info("Chamando API-Football /fixtures...")
         cleaned_payload = build_analysis_payload(api_client, settings)
+        logging.info("API-Football respondeu. Partidas encontradas: %s", len(cleaned_payload))
     except FootballApiRateLimitError as exc:
         logging.warning("%s", exc)
         message = build_rate_limit_message(settings.target_date)
@@ -732,20 +734,43 @@ def run_cron_bot(settings: Settings) -> None:
         )
         logging.info("Fluxo finalizado com aviso de limite da API")
         return
+    except Exception as exc:
+        logging.error("Erro inesperado ao buscar partidas: %s", exc, exc_info=True)
+        asyncio.run(
+            send_to_telegram(
+                token=settings.telegram_token,
+                chat_id=settings.telegram_chat_id,
+                message=f"❌ Erro ao buscar partidas: {exc}",
+            )
+        )
+        return
 
     if not cleaned_payload:
         message = build_no_games_message(settings.target_date)
         logging.info("Nenhuma partida encontrada para envio")
     else:
-        logging.info("Enviando %s partidas para analise", len(cleaned_payload))
-        message = ask_llm_for_predictions(
-            provider=settings.llm_provider,
-            api_key=settings.llm_api_key,
-            base_url=settings.llm_base_url,
-            model=settings.llm_model,
-            cleaned_payload=cleaned_payload,
-        )
+        logging.info("Enviando %s partidas para analise LLM...", len(cleaned_payload))
+        try:
+            message = ask_llm_for_predictions(
+                provider=settings.llm_provider,
+                api_key=settings.llm_api_key,
+                base_url=settings.llm_base_url,
+                model=settings.llm_model,
+                cleaned_payload=cleaned_payload,
+            )
+            logging.info("LLM respondeu com sucesso.")
+        except Exception as exc:
+            logging.error("Erro ao chamar LLM: %s", exc, exc_info=True)
+            asyncio.run(
+                send_to_telegram(
+                    token=settings.telegram_token,
+                    chat_id=settings.telegram_chat_id,
+                    message=f"❌ Erro ao gerar análise: {exc}",
+                )
+            )
+            return
 
+    logging.info("Enviando mensagem para o Telegram...")
     asyncio.run(
         send_to_telegram(
             token=settings.telegram_token,
