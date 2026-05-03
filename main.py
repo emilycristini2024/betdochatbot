@@ -202,12 +202,14 @@ def validate_settings(settings: Settings) -> None:
 
     if not settings.telegram_token:
         missing_fields.append("TELEGRAM_TOKEN")
-    if not settings.telegram_chat_id:
-        missing_fields.append("TELEGRAM_CHAT_ID")
     if not settings.llm_api_key:
         missing_fields.append("LLM_API_KEY")
-    if not settings.rapidapi_key:
-        missing_fields.append("RAPIDAPI_KEY")
+
+    if settings.bot_mode == "cron":
+        if not settings.telegram_chat_id:
+            missing_fields.append("TELEGRAM_CHAT_ID")
+        if not settings.rapidapi_key:
+            missing_fields.append("RAPIDAPI_KEY")
 
     if missing_fields:
         fields = ", ".join(missing_fields)
