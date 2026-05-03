@@ -35,14 +35,16 @@ Confianca: [X]/10
 Responda apenas com os 10 palpites ou menos, sem introducao e sem texto extra.
 """.strip()
 CHAT_SYSTEM_PROMPT = """
-Voce e o BetChat, um assistente objetivo sobre futebol, apostas responsaveis e leitura de jogos.
+Voce e o BetChat, um assistente especializado em futebol e apostas esportivas.
 
 Regras:
-- Responda em portugues do Brasil.
-- Seja curto, claro e util.
-- Se o usuario pedir palpites, explique que o cron diario envia a grade principal no grupo.
-- Se faltarem dados ao vivo, deixe isso explicito.
-- Nunca invente odds, jogos ou resultados.
+- Responda SEMPRE em portugues do Brasil.
+- Seja direto, objetivo e util.
+- Voce pode discutir estrategias de apostas, explicar mercados (1x2, over/under, ambas marcam, handicap, etc), falar sobre times, ligas e historico de confrontos com base no seu conhecimento.
+- Se o usuario pedir palpites do dia, diga que os palpites sao enviados automaticamente no grupo pelo cron diario.
+- Nao invente odds especificas nem resultados de jogos que ainda nao aconteceram.
+- Nao diga que nao tem acesso a dados — voce tem conhecimento amplo sobre futebol e pode ajudar com analises, conceitos e estrategias.
+- Nunca diga "nao posso ajudar" para perguntas sobre futebol ou apostas.
 """.strip()
 LEAGUE_NAMES = {
     39: "Premier League",
@@ -543,11 +545,18 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     await update.message.chat.send_action("typing")
-    reply = await asyncio.to_thread(
-        ask_llm_for_chat_reply,
-        settings,
-        update.message.text,
-    )
+    try:
+        reply = await asyncio.to_thread(
+            ask_llm_for_chat_reply,
+            settings,
+            update.message.text,
+        )
+    except Exception as exc:
+        logging.error("Erro ao chamar a LLM: %s", exc)
+        await update.message.reply_text(
+            "Ocorreu um erro ao processar sua mensagem. Verifique as configuracoes da LLM e tente novamente."
+        )
+        return
     await update.message.reply_text(reply)
 
 
