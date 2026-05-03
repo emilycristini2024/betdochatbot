@@ -4,13 +4,14 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import requests
 from dotenv import load_dotenv
 from openai import OpenAI
 from telegram import Bot
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 API_BASE_URL = "https://v3.football.api-sports.io"
 DEFAULT_SYSTEM_PROMPT = """
@@ -154,7 +155,7 @@ def load_settings() -> Settings:
     target_date = os.getenv("TARGET_DATE")
 
     if not target_date:
-        target_date = datetime.now().strftime("%Y-%m-%d")
+        target_date = get_current_datetime(timezone).strftime("%Y-%m-%d")
 
     league_ids = [
         int(league_id.strip())
@@ -198,6 +199,24 @@ def validate_settings(settings: Settings) -> None:
     if missing_fields:
         fields = ", ".join(missing_fields)
         raise ValueError(f"Variaveis obrigatorias ausentes: {fields}")
+
+
+def get_current_datetime(timezone_name: str) -> datetime:
+    try:
+        return datetime.now(ZoneInfo(timezone_name))
+    except ZoneInfoNotFoundError:
+        fallback_offsets = {
+            "America/Sao_Paulo": -3,
+            "UTC": 0,
+        }
+        offset_hours = fallback_offsets.get(timezone_name, 0)
+        fallback_timezone = timezone(timedelta(hours=offset_hours))
+        logging.warning(
+            "Timezone %s indisponivel no ambiente. Usando fallback UTC%+d.",
+            timezone_name,
+            offset_hours,
+        )
+        return datetime.now(UTC).astimezone(fallback_timezone)
 
 
 def parse_average(value: Any) -> float | None:
@@ -335,17 +354,26 @@ def build_analysis_payload(
         home = teams.get("home", {})
         away = teams.get("away", {})
 
-        home_stats = api_client.get_team_statistics(
-            team_id=home.get("id"),
-            league_id=league.get("id"),
-            season=league.get("season"),
-        )
-        away_stats = api_client.get_team_statistics(
-            team_id=away.get("id"),
-            league_id=league.get("id"),
-            season=league.get("season"),
-        )
-        odds_payload = api_client.get_fixture_odds(fixture.get("fixture", {}).get("id"))
+        try:
+            home_stats = api_client.get_team_statistics(
+                team_id=home.get("id"),
+                league_id=league.get("id"),
+                season=league.get("season"),
+            )
+            away_stats = api_client.get_team_statistics(
+                team_id=away.get("id"),
+                league_id=league.get("id"),
+                season=league.get("season"),
+            )
+            odds_payload = api_client.get_fixture_odds(fixture.get("fixture", {}).get("id"))
+        except FootballApiRateLimitError:
+            if simplified_fixtures:
+                logging.warning(
+                    "Cota da API-Football esgotada apos %s partidas. Continuando com analise parcial.",
+                    len(simplified_fixtures),
+                )
+                break
+            raise
 
         simplified_fixtures.append(
             simplify_fixture(

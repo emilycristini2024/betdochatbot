@@ -71,7 +71,7 @@ Se preferir não manter um servidor ligado o tempo todo, GitHub Actions agendado
 
 O plano gratuito da API-Football costuma ser limitado. Por isso, o script usa `MAX_FIXTURES` para evitar consumir cotas demais ao buscar estatísticas e odds.
 
-Para economizar requisições, o script busca os jogos do dia em uma chamada única e filtra as ligas localmente. Mesmo assim, estatísticas por time e odds por jogo ainda consomem cota, então `MAX_FIXTURES` e `REQUEST_DELAY_SECONDS` ajudam a controlar uso.
+Para economizar requisições, o script busca os jogos do dia em uma chamada única e filtra as ligas localmente. Mesmo assim, estatísticas por time e odds por jogo ainda consomem cota, então `MAX_FIXTURES` e `REQUEST_DELAY_SECONDS` ajudam a controlar uso. No plano grátis, vale começar com `MAX_FIXTURES=3` ou `5`.
 
 ## Modelo padrão
 
