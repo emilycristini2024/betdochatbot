@@ -1,0 +1,11 @@
+.env
+api.txt
+ID_telgram.txt
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.venv313/
+venv/
+.tmp/
