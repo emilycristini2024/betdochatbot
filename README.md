@@ -45,6 +45,15 @@ RAPIDAPI_KEY=
 python main.py
 ```
 
+## Modos de uso
+
+O projeto suporta dois modos:
+
+- `BOT_MODE=cron`: envia os palpites programados para o grupo.
+- `BOT_MODE=chat`: responde mensagens no Telegram usando a Groq.
+
+No modo `chat`, em grupo o bot responde quando for mencionado ou quando alguém responder uma mensagem dele. Em conversa privada, ele responde normalmente.
+
 ## Agendamento
 
 Você pode agendar a execução no Railway ou Cron. Para a API gratuita, prefira um horário único por dia, como `08:00` ou `09:00` no horário de Brasília.
@@ -52,6 +61,8 @@ Você pode agendar a execução no Railway ou Cron. Para a API gratuita, prefira
 ## Deploy recomendado
 
 O melhor encaixe para este projeto é um Cron Job no Railway, porque o script executa, envia a mensagem e encerra sozinho.
+
+Se você quiser bot conversacional no Telegram, crie um segundo serviço no Railway usando o mesmo repositório, mas com `BOT_MODE=chat`. Nesse caso, ele deve rodar como serviço contínuo, não como cron.
 
 Passo a passo sugerido:
 

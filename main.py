@@ -10,7 +10,8 @@ from typing import Any
 import requests
 from dotenv import load_dotenv
 from openai import OpenAI
-from telegram import Bot
+from telegram import Bot, Update
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 API_BASE_URL = "https://v3.football.api-sports.io"
@@ -32,6 +33,16 @@ Confianca: [X]/10
 ---
 
 Responda apenas com os 10 palpites ou menos, sem introducao e sem texto extra.
+""".strip()
+CHAT_SYSTEM_PROMPT = """
+Voce e o BetChat, um assistente objetivo sobre futebol, apostas responsaveis e leitura de jogos.
+
+Regras:
+- Responda em portugues do Brasil.
+- Seja curto, claro e util.
+- Se o usuario pedir palpites, explique que o cron diario envia a grade principal no grupo.
+- Se faltarem dados ao vivo, deixe isso explicito.
+- Nunca invente odds, jogos ou resultados.
 """.strip()
 LEAGUE_NAMES = {
     39: "Premier League",
@@ -59,6 +70,7 @@ class Settings:
     league_ids: list[int]
     max_fixtures: int
     request_delay_seconds: float
+    bot_mode: str
 
 
 class FootballApiError(Exception):
@@ -178,6 +190,7 @@ def load_settings() -> Settings:
         league_ids=league_ids,
         max_fixtures=int(os.getenv("MAX_FIXTURES", "10")),
         request_delay_seconds=float(os.getenv("REQUEST_DELAY_SECONDS", "1.0")),
+        bot_mode=os.getenv("BOT_MODE", "cron").strip().lower(),
     )
 
     validate_settings(settings)
@@ -412,6 +425,19 @@ def ask_llm_for_predictions(
     return content.strip()
 
 
+def ask_llm_for_chat_reply(settings: Settings, user_message: str) -> str:
+    client = OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url)
+    response = client.chat.completions.create(
+        model=settings.llm_model,
+        messages=[
+            {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+    )
+    content = response.choices[0].message.content or ""
+    return content.strip() or "Nao consegui responder agora. Tente novamente em instantes."
+
+
 def split_message(text: str, max_length: int = 4000) -> list[str]:
     if len(text) <= max_length:
         return [text]
@@ -465,13 +491,81 @@ def build_rate_limit_message(target_date: str) -> str:
     )
 
 
-def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+
+    await update.message.reply_text(
+        "BetChat online. Posso responder perguntas curtas sobre futebol e apostas, "
+        "e o cron diario continua enviando os palpites programados."
     )
 
-    settings = load_settings()
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+
+    await update.message.reply_text(
+        "Comandos:\n"
+        "/start - inicia o bot\n"
+        "/help - mostra esta ajuda\n\n"
+        "Em grupo, respondo quando voce falar comigo ou responder uma mensagem minha."
+    )
+
+
+def should_answer_message(update: Update, bot_username: str | None) -> bool:
+    message = update.message
+    if not message or not message.text:
+        return False
+
+    if message.chat.type == "private":
+        return True
+
+    if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.is_bot:
+        return True
+
+    if bot_username and f"@{bot_username.lower()}" in message.text.lower():
+        return True
+
+    return False
+
+
+async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    bot_username: str | None = context.application.bot_data.get("bot_username")
+
+    if not update.message or not update.message.text:
+        return
+
+    if not should_answer_message(update, bot_username):
+        return
+
+    await update.message.chat.send_action("typing")
+    reply = await asyncio.to_thread(
+        ask_llm_for_chat_reply,
+        settings,
+        update.message.text,
+    )
+    await update.message.reply_text(reply)
+
+
+async def post_init(application: Application) -> None:
+    me = await application.bot.get_me()
+    application.bot_data["bot_username"] = me.username
+    logging.info("Bot conversacional conectado como @%s", me.username)
+
+
+def run_chat_bot(settings: Settings) -> None:
+    application = Application.builder().token(settings.telegram_token).post_init(post_init).build()
+    application.bot_data["settings"] = settings
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
+    logging.info("Iniciando modo chat por polling")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+def run_cron_bot(settings: Settings) -> None:
     api_client = FootballApiClient(
         api_key=settings.rapidapi_key,
         host=settings.rapidapi_host,
@@ -515,6 +609,21 @@ def main() -> None:
         )
     )
     logging.info("Fluxo finalizado com sucesso")
+
+
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
+
+    settings = load_settings()
+
+    if settings.bot_mode == "chat":
+        run_chat_bot(settings)
+        return
+
+    run_cron_bot(settings)
 
 
 if __name__ == "__main__":
