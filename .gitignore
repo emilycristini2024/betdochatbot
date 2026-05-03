@@ -1,6 +1,7 @@
 .env
 api.txt
 ID_telgram.txt
+Api-groq.txt
 __pycache__/
 *.pyc
 *.pyo
