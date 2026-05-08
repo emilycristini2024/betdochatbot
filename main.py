@@ -439,7 +439,14 @@ def extract_date_from_message(text: str, current_date: str, timezone_name: str) 
     # Detecta "amanhã"
     if "amanhã" in text_lower or "amanha" in text_lower:
         dt = get_current_datetime(timezone_name) + timedelta(days=1)
-        return dt.strftime("%Y-%m-%d")
+        extracted = dt.strftime("%Y-%m-%d")
+        logging.info("Detectado 'amanhã': %s (hoje: %s)", extracted, current_date)
+        return extracted
+
+    # Detecta "hoje"
+    if "hoje" in text_lower:
+        logging.info("Detectado 'hoje': %s", current_date)
+        return current_date
 
     # Detecta padrão DD/MM ou DD/MM/YYYY
     match = re.search(r"(\d{1,2})/(\d{1,2})(?:/(\d{4}))?", text)
@@ -447,8 +454,11 @@ def extract_date_from_message(text: str, current_date: str, timezone_name: str) 
         day = match.group(1).zfill(2)
         month = match.group(2).zfill(2)
         year = match.group(3) or get_current_datetime(timezone_name).strftime("%Y")
-        return f"{year}-{month}-{day}"
+        extracted = f"{year}-{month}-{day}"
+        logging.info("Detectado data específica: %s", extracted)
+        return extracted
 
+    logging.info("Nenhuma data específica detectada, usando hoje: %s", current_date)
     return current_date
 
 
