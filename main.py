@@ -692,6 +692,10 @@ def run_chat_bot(settings: Settings) -> None:
         Application.builder()
         .token(settings.telegram_token)
         .post_init(post_init)
+        .read_timeout(30)
+        .write_timeout(30)
+        .connect_timeout(30)
+        .pool_timeout(30)
         .build()
     )
     application.bot_data["settings"] = settings
@@ -702,11 +706,6 @@ def run_chat_bot(settings: Settings) -> None:
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
-        timeout=30,
-        read_timeout=30,
-        write_timeout=30,
-        connect_timeout=30,
-        pool_timeout=30,
     )
 
 
