@@ -16,6 +16,20 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 API_BASE_URL = "https://v3.football.api-sports.io"
+SPORTSDB_BASE_URL = "https://www.thesportsdb.com/api/v1/json/123"
+
+# IDs das ligas no TheSportsDB (usadas no fallback)
+SPORTSDB_LEAGUE_IDS = [
+    4328,  # Premier League
+    4335,  # La Liga
+    4332,  # Serie A (Itália)
+    4331,  # Bundesliga
+    4334,  # Ligue 1
+    4351,  # Brasileirão Série A
+    4406,  # Liga MX
+    4480,  # Eredivisie
+    4344,  # Primeira Liga (Portugal)
+]
 
 DEFAULT_SYSTEM_PROMPT = """
 Voce e um Trader Esportivo de elite e analista quantitativo. Sua missao e ler o JSON de partidas e estatisticas fornecido e selecionar as 10 melhores oportunidades de aposta do dia.
@@ -45,27 +59,75 @@ Responda apenas com os 10 palpites ou menos, sem introducao e sem texto extra.
 """.strip()
 
 CHAT_SYSTEM_PROMPT = """
-Você é o BetChat, analista esportivo especializado em futebol com foco em mercados de gols, ambas as equipes marcam (BTTS) e escanteios.
+VOCÊ É BETCHAT - ANALISTA ESPORTIVO ESPECIALIZADO.
 
-Regras obrigatórias:
-1. Responda sempre em português do Brasil, de forma natural e direta.
-2. Responda qualquer mensagem do usuário, inclusive saudações e perguntas gerais sobre futebol.
-3. Quando receber dados de jogos em JSON, analise cada partida focando em:
-   - Média de gols marcados e sofridos por jogo (casa e fora)
-   - Probabilidade de ambas marcarem baseada na forma ofensiva dos dois times
-   - Volume de escanteios esperado baseado no estilo de jogo
-   - Sugestão de mercado: Over/Under Gols, BTTS Sim/Não, Total Escanteios
-4. Quando não houver dados de jogos, analise com base no seu conhecimento dos times e ligas.
-5. Seja direto e opinativo. Diga qual mercado tem mais valor e por quê.
-6. Nunca invente resultados ou odds numéricas específicas.
-7. Nunca recuse analisar um jogo de futebol.
-8. Nunca peça dados em JSON ao usuário — você busca os dados automaticamente quando necessário.
-9. Formato de análise por jogo:
-   ⚽ [Time A] x [Time B] — [Liga]
-   Gols: [análise over/under]
-   BTTS: [Sim/Não e motivo]
-   Escanteios: [expectativa]
-   Mercado recomendado: [sugestão]
+IDENTIDADE:
+- Você é um trader e analista quantitativo com expertise em futebol.
+- Foco: mercados de gols (Over/Under), ambas as equipes marcam (BTTS) e escanteios.
+- Estilo: Direto, opinativo, técnico. Sem floreios.
+
+INSTRUÇÕES CRÍTICAS (OBRIGATÓRIAS):
+1. SEMPRE responda em português do Brasil, clara e concisa.
+2. SEMPRE analise jogos com foco em VALOR - qual mercado tem a melhor probabilidade.
+3. Quando receber dados de jogos (JSON), analise CADA partida assim:
+   ⚽ Time A x Time B — Liga
+   📊 Gols: [Over/Under baseado em médias]
+   🤝 BTTS: [Sim/Não com explicação]
+   🎯 Mercado: [Over 2.5/Ambas Marcam/etc]
+   💡 Por quê: [máx 15 palavras]
+4. Quando NÃO houver dados de jogos, responda com análise do seu conhecimento.
+5. NUNCA invente odds numéricas - use aproximações (Ex: "odds próximas de 1.80").
+6. NUNCA recuse analisar futebol.
+7. Seja opinativo: "Este jogo tem valor em Over 2.5 porque..." (não genérico).
+8. Responda saudações com entusiasmo, mas sempre pronto para análises.
+
+EXEMPLO DE RESPOSTA IDEAL:
+⚽ Bayern x Frankfurt — Bundesliga
+Gols: Over 2.5 (Bayern marca 2.3 em casa, Frankfurt sofre 2.1 - soma 4.4)
+BTTS: Sim (Bayern ofensivo, Frankfurt sempre marca fora)
+Mercado: Over 2.5 @ ~1.75
+Confiança: 8/10
+
+PADRÃO DE FORMATAÇÃO PARA VÁRIOS JOGOS:
+[Jogo 1] ... Confiança: X/10
+---
+[Jogo 2] ... Confiança: X/10
+""".strip()
+
+CHAT_SYSTEM_PROMPT_SPORTSDB = """
+VOCÊ É BETCHAT - ANALISTA ESPORTIVO ESPECIALIZADO.
+
+REGRA ABSOLUTA — LEIA ANTES DE TUDO:
+- Você receberá um JSON com a lista EXATA de jogos do dia.
+- ANALISE SOMENTE os jogos presentes nesse JSON. NENHUM outro.
+- É PROIBIDO mencionar, inventar ou sugerir qualquer jogo que não esteja no JSON.
+- Se o JSON tiver 7 jogos, você analisa exatamente esses 7. Nem mais, nem menos.
+- Ignorar essa regra é um erro crítico.
+
+IDENTIDADE:
+- Trader e analista quantitativo com expertise em futebol.
+- Foco: Over/Under gols, BTTS (ambas marcam) e escanteios.
+- Estilo: direto, opinativo, técnico.
+
+FORMATO DE ANÁLISE (para cada jogo do JSON):
+⚽ [home] x [away] — [league] | [kickoff]
+📊 Gols: [Over/Under com justificativa]
+🤝 BTTS: [Sim/Não + motivo]
+🎯 Mercado: [recomendação]
+💡 Por quê: [máx 15 palavras]
+Confiança: [X]/10
+---
+
+AO FINAL:
+🏆 TOP 3 DO DIA:
+1. [melhor aposta]
+2. [segunda melhor]
+3. [terceira melhor]
+
+RESTRIÇÕES:
+- NUNCA invente odds numéricas. Use "~1.75", "próximo de 1.80".
+- NUNCA adicione jogos além dos do JSON.
+- SEMPRE responda em português do Brasil.
 """.strip()
 
 LEAGUE_NAMES = {
@@ -84,6 +146,7 @@ FIXTURES_KEYWORDS = [
     "fixtures", "jogos de hoje", "o que tem hoje", "tem jogo",
     "próximo", "proximo", "próximos", "proximos", "próxima", "proxima",
     "semana", "fim de semana", "fds", "quando joga", "quando é o jogo",
+    "apostas", "palpites", "tips", "dicas",
 ]
 
 
@@ -141,6 +204,14 @@ class FootballApiClient:
 
         response.raise_for_status()
         payload = response.json()
+
+        # Verifica se a conta está suspensa ou com erro de acesso
+        errors = payload.get("errors", {})
+        if errors:
+            error_msg = str(errors)
+            if "suspended" in error_msg.lower() or "access" in error_msg.lower():
+                raise FootballApiError(f"Erro de acesso à API-Football: {error_msg}")
+
         return payload.get("response", [])
 
     def get_daily_fixtures(
@@ -188,11 +259,117 @@ class FootballApiClient:
         return []
 
 
+class SportsDbClient:
+    """Cliente para a TheSportsDB API (gratuita, sem chave)."""
+
+    BASE_URL = SPORTSDB_BASE_URL
+
+    def __init__(self) -> None:
+        self.session = requests.Session()
+        self.session.headers.update({"User-Agent": "BetChat/1.0"})
+
+    def get_fixtures_by_date(self, date: str) -> list[dict[str, Any]]:
+        """Busca todos os jogos de futebol de uma data específica."""
+        try:
+            response = self.session.get(
+                f"{self.BASE_URL}/eventsday.php",
+                params={"d": date, "s": "Soccer"},
+                timeout=15,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("events") or []
+        except Exception as exc:
+            logging.warning("TheSportsDB eventsday falhou: %s", exc)
+            return []
+
+    def get_next_fixtures_by_league(self, league_id: int) -> list[dict[str, Any]]:
+        """Busca os próximos jogos de uma liga específica."""
+        try:
+            response = self.session.get(
+                f"{self.BASE_URL}/eventsnextleague.php",
+                params={"id": league_id},
+                timeout=15,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("events") or []
+        except Exception as exc:
+            logging.warning("TheSportsDB eventsnextleague(%s) falhou: %s", league_id, exc)
+            return []
+
+    def get_fixtures_for_date(self, target_date: str) -> list[dict[str, Any]]:
+        """
+        Estratégia combinada:
+        1. Tenta buscar jogos do dia diretamente via eventsday
+        2. Complementa com próximos jogos por liga, filtrando ESTRITAMENTE pela data
+        Jogos com data diferente de target_date são sempre descartados.
+        """
+        # Passo 1: jogos do dia
+        day_fixtures = self.get_fixtures_by_date(target_date)
+        logging.info("TheSportsDB eventsday retornou %d jogos para %s", len(day_fixtures), target_date)
+
+        # Normaliza e filtra pela data (eventsday pode retornar datas erradas em edge cases)
+        result = []
+        seen_ids: set[str] = set()
+        for e in day_fixtures:
+            if e.get("dateEvent", "") == target_date:
+                normalized = self._normalize_event(e)
+                result.append(normalized)
+                if normalized.get("event_id"):
+                    seen_ids.add(str(normalized["event_id"]))
+
+        # Passo 2: complementa com próximos jogos por liga, filtrando pela data
+        logging.info("Complementando com eventsnextleague para %s...", target_date)
+        for league_id in SPORTSDB_LEAGUE_IDS:
+            league_events = self.get_next_fixtures_by_league(league_id)
+            for event in league_events:
+                event_date = event.get("dateEvent", "")
+                event_id = str(event.get("idEvent", ""))
+                # FILTRO ESTRITO: só aceita jogos da data exata solicitada
+                if event_date == target_date and event_id not in seen_ids:
+                    result.append(self._normalize_event(event))
+                    seen_ids.add(event_id)
+
+        logging.info("TheSportsDB total combinado: %d jogos para %s", len(result), target_date)
+        return result
+
+    def _normalize_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        """Normaliza um evento da TheSportsDB para o formato interno."""
+        # Horário: strTime está em UTC, converte para BRT (UTC-3)
+        time_utc = event.get("strTime") or event.get("strTimeLocal") or ""
+        kickoff_brt = self._convert_time_to_brt(event.get("dateEvent", ""), time_utc)
+
+        return {
+            "event_id": event.get("idEvent"),
+            "kickoff": kickoff_brt,
+            "league": event.get("strLeague", ""),
+            "country": event.get("strCountry", ""),
+            "home": event.get("strHomeTeam", ""),
+            "away": event.get("strAwayTeam", ""),
+            "source": "thesportsdb",
+        }
+
+    def _convert_time_to_brt(self, date_str: str, time_utc: str) -> str:
+        """Converte horário UTC para BRT (UTC-3) e retorna string formatada."""
+        if not date_str or not time_utc:
+            return date_str or ""
+        try:
+            # time_utc pode vir como "HH:MM:SS" ou "HH:MM:SS+00:00"
+            time_clean = time_utc.split("+")[0].strip()
+            dt_utc = datetime.strptime(f"{date_str} {time_clean}", "%Y-%m-%d %H:%M:%S")
+            dt_utc = dt_utc.replace(tzinfo=UTC)
+            dt_brt = dt_utc.astimezone(timezone(timedelta(hours=-3)))
+            return dt_brt.strftime("%Y-%m-%d %H:%M BRT")
+        except Exception:
+            return f"{date_str} {time_utc}"
+
+
 def load_settings() -> Settings:
     load_dotenv()
 
     tz = os.getenv("TIMEZONE", "America/Sao_Paulo")
-    target_date = os.getenv("TARGET_DATE")
+    target_date = os.getenv("TARGET_DATE", "").strip()
 
     if not target_date:
         target_date = get_current_datetime(tz).strftime("%Y-%m-%d")
@@ -236,8 +413,8 @@ def validate_settings(settings: Settings) -> None:
     if settings.bot_mode == "cron":
         if not settings.telegram_chat_id:
             missing_fields.append("TELEGRAM_CHAT_ID")
-        if not settings.rapidapi_key:
-            missing_fields.append("RAPIDAPI_KEY")
+        # No modo cron, API-Football é necessária para análise completa
+        # mas não bloqueia se TheSportsDB for o fallback
 
     if missing_fields:
         fields = ", ".join(missing_fields)
@@ -462,40 +639,50 @@ def extract_date_from_message(text: str, current_date: str, timezone_name: str) 
     return current_date
 
 
-def get_fixtures_for_chat(settings: Settings, target_date: str) -> list[dict[str, Any]]:
-    """Busca jogos do dia para o modo chat (sem estatísticas detalhadas para economizar cota)."""
-    if not settings.rapidapi_key:
-        return []
-
-    api_client = FootballApiClient(
-        api_key=settings.rapidapi_key,
-        host=settings.rapidapi_host,
-        request_delay_seconds=0.5,
-    )
-
-    try:
-        fixtures = api_client.get_daily_fixtures(
-            league_ids=settings.league_ids,
-            target_date=target_date,
-            timezone=settings.timezone,
+def get_fixtures_for_chat(settings: Settings, target_date: str) -> tuple[list[dict[str, Any]], str]:
+    """
+    Busca jogos do dia para o modo chat.
+    Tenta API-Football primeiro; se falhar, usa TheSportsDB como fallback.
+    Retorna (lista_de_jogos, fonte) onde fonte é 'football_api' ou 'thesportsdb'.
+    """
+    # Tenta API-Football se a chave estiver configurada
+    if settings.rapidapi_key:
+        api_client = FootballApiClient(
+            api_key=settings.rapidapi_key,
+            host=settings.rapidapi_host,
+            request_delay_seconds=0.5,
         )
-    except Exception as exc:
-        logging.warning("Erro ao buscar jogos para o chat: %s", exc)
-        return []
+        try:
+            fixtures = api_client.get_daily_fixtures(
+                league_ids=settings.league_ids,
+                target_date=target_date,
+                timezone=settings.timezone,
+            )
+            if fixtures:
+                result = []
+                for fixture in fixtures[:15]:
+                    league = fixture.get("league", {})
+                    teams = fixture.get("teams", {})
+                    fixture_info = fixture.get("fixture", {})
+                    result.append({
+                        "kickoff": fixture_info.get("date"),
+                        "league": league.get("name") or LEAGUE_NAMES.get(league.get("id"), "Liga"),
+                        "home": teams.get("home", {}).get("name"),
+                        "away": teams.get("away", {}).get("name"),
+                        "source": "football_api",
+                    })
+                logging.info("API-Football retornou %d jogos para %s", len(result), target_date)
+                return result, "football_api"
+            else:
+                logging.info("API-Football retornou 0 jogos para %s, tentando TheSportsDB", target_date)
+        except Exception as exc:
+            logging.warning("API-Football falhou (%s), usando TheSportsDB como fallback", exc)
 
-    result = []
-    for fixture in fixtures[:15]:
-        league = fixture.get("league", {})
-        teams = fixture.get("teams", {})
-        fixture_info = fixture.get("fixture", {})
-        result.append({
-            "kickoff": fixture_info.get("date"),
-            "league": league.get("name") or LEAGUE_NAMES.get(league.get("id"), "Liga"),
-            "home": teams.get("home", {}).get("name"),
-            "away": teams.get("away", {}).get("name"),
-        })
-
-    return result
+    # Fallback: TheSportsDB
+    logging.info("Buscando jogos via TheSportsDB para %s", target_date)
+    sportsdb = SportsDbClient()
+    fixtures = sportsdb.get_fixtures_for_date(target_date)
+    return fixtures, "thesportsdb"
 
 
 def ask_llm_for_predictions(
@@ -526,19 +713,30 @@ def ask_llm_for_chat_reply(
     settings: Settings,
     user_message: str,
     fixtures_context: list[dict[str, Any]] | None = None,
+    fixtures_source: str = "football_api",
 ) -> str:
     client = OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url)
 
+    # Escolhe o system prompt baseado na fonte dos dados
+    if fixtures_context and fixtures_source == "thesportsdb":
+        system_prompt = CHAT_SYSTEM_PROMPT_SPORTSDB
+    else:
+        system_prompt = CHAT_SYSTEM_PROMPT
+
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
     ]
 
     if fixtures_context:
         fixtures_json = json.dumps(fixtures_context, ensure_ascii=False, indent=2)
+        source_label = "TheSportsDB (agenda oficial)" if fixtures_source == "thesportsdb" else "API-Football"
         messages.append({
             "role": "user",
             "content": (
-                f"Dados reais dos jogos disponíveis:\n{fixtures_json}\n\n"
+                f"JOGOS REAIS DE HOJE ({source_label}) — ANALISE SOMENTE ESTES:\n"
+                f"{fixtures_json}\n\n"
+                f"INSTRUÇÃO: Analise APENAS os {len(fixtures_context)} jogos acima. "
+                f"NÃO mencione nenhum outro jogo.\n\n"
                 f"Pergunta do usuário: {user_message}"
             ),
         })
@@ -620,6 +818,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Exemplos de perguntas:\n"
         "- Jogos de hoje\n"
         "- Jogos de amanhã\n"
+        "- Apostas de hoje\n"
         "- Vasco x Flamengo, analisa\n"
         "- Real Madrid x Barcelona escanteios\n\n"
         "Em grupo, me mencione com @Betchatdo_bot ou responda uma mensagem minha."
@@ -657,22 +856,26 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     user_text = update.message.text
     fixtures_context: list[dict[str, Any]] | None = None
+    fixtures_source = "football_api"
 
-    # Se a mensagem pede jogos e temos a API configurada, busca dados reais
-    if message_wants_fixtures(user_text) and settings.rapidapi_key:
+    # Se a mensagem pede jogos, busca dados reais (API-Football ou TheSportsDB)
+    if message_wants_fixtures(user_text):
         target_date = extract_date_from_message(
             user_text,
             get_current_datetime(settings.timezone).strftime("%Y-%m-%d"),
             settings.timezone,
         )
-        logging.info("Buscando jogos reais para o chat: %s", target_date)
-        fixtures_context = await asyncio.to_thread(
+        logging.info("Buscando jogos para o chat: %s", target_date)
+        fixtures_context, fixtures_source = await asyncio.to_thread(
             get_fixtures_for_chat, settings, target_date
         )
         if fixtures_context:
-            logging.info("Encontrados %d jogos para o chat", len(fixtures_context))
+            logging.info(
+                "Encontrados %d jogos via %s para %s",
+                len(fixtures_context), fixtures_source, target_date,
+            )
         else:
-            logging.info("Nenhum jogo encontrado para %s", target_date)
+            logging.info("Nenhum jogo encontrado para %s em nenhuma fonte", target_date)
 
     try:
         reply = await asyncio.to_thread(
@@ -680,6 +883,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             settings,
             user_text,
             fixtures_context,
+            fixtures_source,
         )
     except Exception as exc:
         logging.error("Erro ao chamar a LLM: %s", exc)
@@ -720,73 +924,94 @@ def run_chat_bot(settings: Settings) -> None:
 
 
 def run_cron_bot(settings: Settings) -> None:
-    api_client = FootballApiClient(
-        api_key=settings.rapidapi_key,
-        host=settings.rapidapi_host,
-        request_delay_seconds=settings.request_delay_seconds,
-    )
-
-    logging.info("Buscando partidas de %s", settings.target_date)
-    try:
-        logging.info("Chamando API-Football /fixtures...")
-        cleaned_payload = build_analysis_payload(api_client, settings)
-        logging.info("API-Football respondeu. Partidas encontradas: %s", len(cleaned_payload))
-    except FootballApiRateLimitError as exc:
-        logging.warning("%s", exc)
-        message = build_rate_limit_message(settings.target_date)
-        asyncio.run(
-            send_to_telegram(
-                token=settings.telegram_token,
-                chat_id=settings.telegram_chat_id,
-                message=message,
-            )
+    # Tenta API-Football primeiro
+    if settings.rapidapi_key:
+        api_client = FootballApiClient(
+            api_key=settings.rapidapi_key,
+            host=settings.rapidapi_host,
+            request_delay_seconds=settings.request_delay_seconds,
         )
-        logging.info("Fluxo finalizado com aviso de limite da API")
-        return
-    except Exception as exc:
-        logging.error("Erro inesperado ao buscar partidas: %s", exc, exc_info=True)
-        asyncio.run(
-            send_to_telegram(
-                token=settings.telegram_token,
-                chat_id=settings.telegram_chat_id,
-                message=f"❌ Erro ao buscar partidas: {exc}",
-            )
-        )
-        return
 
-    if not cleaned_payload:
+        logging.info("Buscando partidas de %s via API-Football", settings.target_date)
+        try:
+            logging.info("Chamando API-Football /fixtures...")
+            cleaned_payload = build_analysis_payload(api_client, settings)
+            logging.info("API-Football respondeu. Partidas encontradas: %s", len(cleaned_payload))
+
+            if cleaned_payload:
+                _send_cron_analysis(settings, cleaned_payload)
+                return
+
+            logging.info("API-Football sem jogos, tentando TheSportsDB...")
+        except FootballApiRateLimitError as exc:
+            logging.warning("%s", exc)
+            message = build_rate_limit_message(settings.target_date)
+            asyncio.run(send_to_telegram(settings.telegram_token, settings.telegram_chat_id, message))
+            logging.info("Fluxo finalizado com aviso de limite da API")
+            return
+        except Exception as exc:
+            logging.warning("API-Football falhou: %s. Tentando TheSportsDB...", exc)
+
+    # Fallback: TheSportsDB para agenda + LLM para análise
+    logging.info("Buscando partidas de %s via TheSportsDB", settings.target_date)
+    sportsdb = SportsDbClient()
+    fixtures = sportsdb.get_fixtures_for_date(settings.target_date)
+
+    if not fixtures:
         message = build_no_games_message(settings.target_date)
-        logging.info("Nenhuma partida encontrada para envio")
+        logging.info("Nenhuma partida encontrada em nenhuma fonte")
     else:
-        logging.info("Enviando %s partidas para analise LLM...", len(cleaned_payload))
+        logging.info("TheSportsDB retornou %d jogos. Enviando para LLM...", len(fixtures))
         try:
             message = ask_llm_for_predictions(
                 provider=settings.llm_provider,
                 api_key=settings.llm_api_key,
                 base_url=settings.llm_base_url,
                 model=settings.llm_model,
-                cleaned_payload=cleaned_payload,
+                cleaned_payload=fixtures[:settings.max_fixtures],
             )
             logging.info("LLM respondeu com sucesso.")
         except Exception as exc:
             logging.error("Erro ao chamar LLM: %s", exc, exc_info=True)
             asyncio.run(
                 send_to_telegram(
-                    token=settings.telegram_token,
-                    chat_id=settings.telegram_chat_id,
-                    message=f"❌ Erro ao gerar análise: {exc}",
+                    settings.telegram_token,
+                    settings.telegram_chat_id,
+                    f"❌ Erro ao gerar análise: {exc}",
                 )
             )
             return
 
     logging.info("Enviando mensagem para o Telegram...")
-    asyncio.run(
-        send_to_telegram(
-            token=settings.telegram_token,
-            chat_id=settings.telegram_chat_id,
-            message=message,
+    asyncio.run(send_to_telegram(settings.telegram_token, settings.telegram_chat_id, message))
+    logging.info("Fluxo finalizado com sucesso")
+
+
+def _send_cron_analysis(settings: Settings, cleaned_payload: list[dict[str, Any]]) -> None:
+    """Envia análise LLM para o Telegram no modo cron."""
+    logging.info("Enviando %s partidas para analise LLM...", len(cleaned_payload))
+    try:
+        message = ask_llm_for_predictions(
+            provider=settings.llm_provider,
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            model=settings.llm_model,
+            cleaned_payload=cleaned_payload,
         )
-    )
+        logging.info("LLM respondeu com sucesso.")
+    except Exception as exc:
+        logging.error("Erro ao chamar LLM: %s", exc, exc_info=True)
+        asyncio.run(
+            send_to_telegram(
+                settings.telegram_token,
+                settings.telegram_chat_id,
+                f"❌ Erro ao gerar análise: {exc}",
+            )
+        )
+        return
+
+    logging.info("Enviando mensagem para o Telegram...")
+    asyncio.run(send_to_telegram(settings.telegram_token, settings.telegram_chat_id, message))
     logging.info("Fluxo finalizado com sucesso")
 
 
