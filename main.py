@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import requests
+import schedule
 from dotenv import load_dotenv
 from openai import OpenAI
 from telegram import Bot, Update
@@ -56,6 +57,32 @@ Confianca: [X]/10
 ---
 
 Responda apenas com os 10 palpites ou menos, sem introducao e sem texto extra.
+""".strip()
+
+MORNING_REPORT_PROMPT = """
+Você é um analista estatístico de futebol especializado em inteligência de dados para apostas esportivas.
+Seu objetivo é fornecer um relatório matinal com exatamente 10 jogos de futebol programados para o dia atual.
+
+Diretrizes de Conteúdo:
+1. Selecione exatamente 10 jogos relevantes do dia (priorize ligas principais e mercados com boa liquidez).
+   Se houver menos de 10 jogos no JSON, analise todos os disponíveis.
+2. Para cada jogo, forneça análise ultra-resumida com fatos objetivos, desfalques de peso ou tendências recentes.
+3. Defina um palpite principal focando em mercados com odds realistas (preferencialmente entre 1.50 e 1.70).
+
+Estrutura da Mensagem (siga rigorosamente este padrão para cada jogo):
+
+⚽ [Nome da Liga / Campeonato]
+👉 [Time da Casa] x [Time Visitante]
+• Análise rápida: [fato estatístico/tendência que justifica o palpite]
+• Palpite sugerido: [Mercado + Odd estimada, ex: Over 1.5 Gols (Odd ~1.55)]
+
+Regras:
+- Seja direto e analítico. Vá direto ao primeiro jogo sem introduções.
+- Não use jargões motivacionais. Foque em probabilidade e dados.
+- Mantenha a formatação idêntica para todos os jogos.
+- NUNCA invente jogos. Use APENAS os jogos do JSON fornecido.
+- NUNCA invente odds exatas. Use aproximações com "~" (ex: ~1.60).
+- Responda em português do Brasil.
 """.strip()
 
 CHAT_SYSTEM_PROMPT = """
@@ -1021,6 +1048,114 @@ def _send_cron_analysis(settings: Settings, cleaned_payload: list[dict[str, Any]
     logging.info("Fluxo finalizado com sucesso")
 
 
+def send_morning_report(settings: Settings) -> None:
+    """Busca jogos do dia e envia o relatório matinal para o Telegram."""
+    today = get_current_datetime(settings.timezone).strftime("%Y-%m-%d")
+    logging.info("Gerando relatório matinal para %s", today)
+
+    # Tenta API-Football, senão usa TheSportsDB
+    fixtures: list[dict[str, Any]] = []
+    if settings.rapidapi_key:
+        api_client = FootballApiClient(
+            api_key=settings.rapidapi_key,
+            host=settings.rapidapi_host,
+            request_delay_seconds=settings.request_delay_seconds,
+        )
+        try:
+            raw = api_client.get_daily_fixtures(
+                league_ids=settings.league_ids,
+                target_date=today,
+                timezone=settings.timezone,
+            )
+            fixtures = [
+                {
+                    "kickoff": f.get("fixture", {}).get("date"),
+                    "league": f.get("league", {}).get("name") or LEAGUE_NAMES.get(f.get("league", {}).get("id"), "Liga"),
+                    "home": f.get("teams", {}).get("home", {}).get("name"),
+                    "away": f.get("teams", {}).get("away", {}).get("name"),
+                }
+                for f in raw[:settings.max_fixtures]
+            ]
+            logging.info("API-Football: %d jogos para %s", len(fixtures), today)
+        except Exception as exc:
+            logging.warning("API-Football falhou: %s. Usando TheSportsDB...", exc)
+
+    if not fixtures:
+        sportsdb = SportsDbClient()
+        fixtures = sportsdb.get_fixtures_for_date(today)
+        logging.info("TheSportsDB: %d jogos para %s", len(fixtures), today)
+
+    if not fixtures:
+        message = f"📋 Relatório matinal {today}\n\nNenhuma partida encontrada nas ligas configuradas."
+        asyncio.run(send_to_telegram(settings.telegram_token, settings.telegram_chat_id, message))
+        return
+
+    # Gera o relatório via LLM
+    client = OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url)
+    fixtures_json = json.dumps(fixtures[:settings.max_fixtures], ensure_ascii=False, indent=2)
+
+    try:
+        response = client.chat.completions.create(
+            model=settings.llm_model,
+            messages=[
+                {"role": "system", "content": MORNING_REPORT_PROMPT},
+                {
+                    "role": "user",
+                    "content": (
+                        f"DATA: {today}\n"
+                        f"JOGOS DO DIA ({len(fixtures[:settings.max_fixtures])} partidas):\n"
+                        f"{fixtures_json}\n\n"
+                        f"Gere o relatório matinal com os palpites do dia."
+                    ),
+                },
+            ],
+        )
+        report = response.choices[0].message.content or ""
+        report = report.strip()
+        logging.info("Relatório matinal gerado com sucesso.")
+    except Exception as exc:
+        logging.error("Erro ao gerar relatório matinal: %s", exc)
+        report = f"❌ Erro ao gerar relatório matinal: {exc}"
+
+    header = f"🌅 *BetChat — Relatório Matinal {today}*\n\n"
+    asyncio.run(send_to_telegram(settings.telegram_token, settings.telegram_chat_id, header + report))
+    logging.info("Relatório matinal enviado para o Telegram.")
+
+
+def run_scheduled_bot(settings: Settings) -> None:
+    """
+    Modo scheduled: roda o bot de chat E agenda o relatório matinal às 9h BRT.
+    BOT_MODE=scheduled no Railway.
+    """
+    # Horário 9h BRT = 12h UTC
+    schedule_time_utc = "12:00"
+    logging.info("Agendando relatório matinal para 09:00 BRT (12:00 UTC) todos os dias.")
+
+    def job() -> None:
+        try:
+            send_morning_report(settings)
+        except Exception as exc:
+            logging.error("Erro no job do relatório matinal: %s", exc, exc_info=True)
+
+    schedule.every().day.at(schedule_time_utc).do(job)
+
+    # Roda o scheduler em thread separada para não bloquear o bot de chat
+    import threading
+
+    def run_scheduler() -> None:
+        logging.info("Scheduler iniciado.")
+        while True:
+            schedule.run_pending()
+            time.sleep(30)
+
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
+
+    # Inicia o bot de chat normalmente
+    logging.info("Iniciando bot de chat com relatório matinal agendado.")
+    run_chat_bot(settings)
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -1031,6 +1166,10 @@ def main() -> None:
 
     if settings.bot_mode == "chat":
         run_chat_bot(settings)
+        return
+
+    if settings.bot_mode == "scheduled":
+        run_scheduled_bot(settings)
         return
 
     run_cron_bot(settings)
