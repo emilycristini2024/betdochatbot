@@ -98,10 +98,11 @@ CHAT_SYSTEM_PROMPT_SPORTSDB = """
 VOCÊ É BETCHAT - ANALISTA ESPORTIVO ESPECIALIZADO.
 
 REGRA ABSOLUTA — LEIA ANTES DE TUDO:
-- Você receberá um JSON com a lista EXATA de jogos do dia.
+- Você receberá um JSON com a lista EXATA de jogos de uma data específica.
 - ANALISE SOMENTE os jogos presentes nesse JSON. NENHUM outro.
 - É PROIBIDO mencionar, inventar ou sugerir qualquer jogo que não esteja no JSON.
-- Se o JSON tiver 7 jogos, você analisa exatamente esses 7. Nem mais, nem menos.
+- A data dos jogos está indicada no JSON e na instrução. NÃO tente calcular datas.
+- NÃO diga que não há jogos — se recebeu o JSON, há jogos. Analise-os.
 - Ignorar essa regra é um erro crítico.
 
 IDENTIDADE:
@@ -127,6 +128,7 @@ AO FINAL:
 RESTRIÇÕES:
 - NUNCA invente odds numéricas. Use "~1.75", "próximo de 1.80".
 - NUNCA adicione jogos além dos do JSON.
+- NUNCA calcule ou assuma datas por conta própria.
 - SEMPRE responda em português do Brasil.
 """.strip()
 
@@ -714,6 +716,7 @@ def ask_llm_for_chat_reply(
     user_message: str,
     fixtures_context: list[dict[str, Any]] | None = None,
     fixtures_source: str = "football_api",
+    target_date: str | None = None,
 ) -> str:
     client = OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url)
 
@@ -730,14 +733,15 @@ def ask_llm_for_chat_reply(
     if fixtures_context:
         fixtures_json = json.dumps(fixtures_context, ensure_ascii=False, indent=2)
         source_label = "TheSportsDB (agenda oficial)" if fixtures_source == "thesportsdb" else "API-Football"
+        date_label = target_date or "data solicitada"
         messages.append({
             "role": "user",
             "content": (
-                f"JOGOS REAIS DE HOJE ({source_label}) — ANALISE SOMENTE ESTES:\n"
+                f"DATA DOS JOGOS: {date_label}\n"
+                f"FONTE: {source_label}\n\n"
                 f"{fixtures_json}\n\n"
-                f"INSTRUÇÃO: Analise APENAS os {len(fixtures_context)} jogos acima. "
-                f"NÃO mencione nenhum outro jogo.\n\n"
-                f"Pergunta do usuário: {user_message}"
+                f"Analise cada um dos {len(fixtures_context)} jogos acima. "
+                f"Todos são do dia {date_label}."
             ),
         })
     else:
@@ -857,6 +861,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     user_text = update.message.text
     fixtures_context: list[dict[str, Any]] | None = None
     fixtures_source = "football_api"
+    target_date: str | None = None
 
     # Se a mensagem pede jogos, busca dados reais (API-Football ou TheSportsDB)
     if message_wants_fixtures(user_text):
@@ -884,6 +889,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             user_text,
             fixtures_context,
             fixtures_source,
+            target_date,
         )
     except Exception as exc:
         logging.error("Erro ao chamar a LLM: %s", exc)
