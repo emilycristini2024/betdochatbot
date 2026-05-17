@@ -10,6 +10,8 @@ from typing import Any
 
 import requests
 import schedule
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.date import DateTrigger
 from dotenv import load_dotenv
 from openai import OpenAI
 from telegram import Bot, Update
@@ -82,6 +84,22 @@ Regras:
 - Mantenha a formatação idêntica para todos os jogos.
 - NUNCA invente jogos. Use APENAS os jogos do JSON fornecido.
 - NUNCA invente odds exatas. Use aproximações com "~" (ex: ~1.60).
+- Responda em português do Brasil.
+""".strip()
+
+REMINDER_PROMPT = """
+Você é um analista de apostas esportivas. Gere um lembrete curto e direto para o jogo que vai começar em 30 minutos.
+
+Formato obrigatório (máximo 5 linhas):
+⏰ Em 30 minutos!
+⚽ [Time Casa] x [Time Visitante] — [Liga]
+🕐 [Horário BRT]
+🎯 Palpite: [mercado recomendado] (Odd ~X.XX)
+💡 [justificativa em até 10 palavras]
+
+Regras:
+- Seja ultra-conciso. Sem introduções.
+- NUNCA invente odds exatas. Use "~" (ex: ~1.65).
 - Responda em português do Brasil.
 """.strip()
 
@@ -1049,8 +1067,107 @@ def _send_cron_analysis(settings: Settings, cleaned_payload: list[dict[str, Any]
     logging.info("Fluxo finalizado com sucesso")
 
 
-def send_morning_report(settings: Settings) -> None:
-    """Busca jogos do dia e envia o relatório matinal para o Telegram."""
+def send_game_reminder(settings: Settings, fixture: dict[str, Any]) -> None:
+    """Envia lembrete 30 minutos antes de um jogo específico."""
+    home = fixture.get("home", "?")
+    away = fixture.get("away", "?")
+    league = fixture.get("league", "?")
+    kickoff = fixture.get("kickoff", "")
+
+    logging.info("Enviando lembrete: %s x %s", home, away)
+
+    client = OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url)
+    try:
+        response = client.chat.completions.create(
+            model=settings.llm_model,
+            messages=[
+                {"role": "system", "content": REMINDER_PROMPT},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Jogo: {home} x {away}\n"
+                        f"Liga: {league}\n"
+                        f"Horário: {kickoff}\n\n"
+                        f"Gere o lembrete de 30 minutos."
+                    ),
+                },
+            ],
+            max_tokens=150,
+        )
+        message = response.choices[0].message.content or ""
+        message = message.strip()
+    except Exception as exc:
+        logging.error("Erro ao gerar lembrete para %s x %s: %s", home, away, exc)
+        message = (
+            f"⏰ Em 30 minutos!\n"
+            f"⚽ {home} x {away} — {league}\n"
+            f"🕐 {kickoff}"
+        )
+
+    asyncio.run(send_to_telegram(settings.telegram_token, settings.telegram_chat_id, message))
+
+
+def schedule_game_reminders(
+    settings: Settings,
+    fixtures: list[dict[str, Any]],
+    apscheduler: BackgroundScheduler,
+) -> int:
+    """
+    Agenda lembretes 30 minutos antes de cada jogo.
+    Retorna o número de lembretes agendados.
+    """
+    now_utc = datetime.now(UTC)
+    scheduled = 0
+
+    for fixture in fixtures:
+        kickoff_str = fixture.get("kickoff", "")
+        if not kickoff_str:
+            continue
+
+        # Parse do horário — formato "YYYY-MM-DD HH:MM BRT"
+        try:
+            # Remove o sufixo " BRT" e converte para UTC
+            clean = kickoff_str.replace(" BRT", "").strip()
+            kickoff_brt = datetime.strptime(clean, "%Y-%m-%d %H:%M")
+            # BRT = UTC-3
+            kickoff_utc = kickoff_brt.replace(tzinfo=timezone(timedelta(hours=-3))).astimezone(UTC)
+        except ValueError:
+            logging.warning("Não foi possível parsear horário: %s", kickoff_str)
+            continue
+
+        # Agenda 30 minutos antes
+        reminder_time = kickoff_utc - timedelta(minutes=30)
+
+        # Só agenda se ainda está no futuro (com margem de 1 minuto)
+        if reminder_time <= now_utc + timedelta(minutes=1):
+            logging.info(
+                "Lembrete de %s x %s ignorado (horário já passou: %s)",
+                fixture.get("home"), fixture.get("away"), reminder_time,
+            )
+            continue
+
+        home = fixture.get("home", "?")
+        away = fixture.get("away", "?")
+
+        apscheduler.add_job(
+            send_game_reminder,
+            trigger=DateTrigger(run_date=reminder_time),
+            args=[settings, fixture],
+            id=f"reminder_{home}_{away}_{kickoff_str}".replace(" ", "_"),
+            replace_existing=True,
+            misfire_grace_time=300,  # 5 min de tolerância
+        )
+        logging.info(
+            "Lembrete agendado: %s x %s às %s UTC (kickoff %s)",
+            home, away, reminder_time.strftime("%H:%M"), kickoff_str,
+        )
+        scheduled += 1
+
+    return scheduled
+
+
+def send_morning_report(settings: Settings, apscheduler: "BackgroundScheduler | None" = None) -> None:
+    """Busca jogos do dia, envia o relatório matinal e agenda lembretes 30min antes de cada jogo."""
     today = get_current_datetime(settings.timezone).strftime("%Y-%m-%d")
     logging.info("Gerando relatório matinal para %s", today)
 
@@ -1118,33 +1235,44 @@ def send_morning_report(settings: Settings) -> None:
         logging.error("Erro ao gerar relatório matinal: %s", exc)
         report = f"❌ Erro ao gerar relatório matinal: {exc}"
 
-    header = f"🌅 *BetChat — Relatório Matinal {today}*\n\n"
+    header = f"🌅 BetChat — Relatório Matinal {today}\n\n"
     asyncio.run(send_to_telegram(settings.telegram_token, settings.telegram_chat_id, header + report))
     logging.info("Relatório matinal enviado para o Telegram.")
+
+    # Agenda lembretes 30 min antes de cada jogo
+    if apscheduler is not None:
+        count = schedule_game_reminders(settings, fixtures[:settings.max_fixtures], apscheduler)
+        logging.info("%d lembretes agendados para hoje.", count)
 
 
 def run_scheduled_bot(settings: Settings) -> None:
     """
-    Modo scheduled: roda o bot de chat E agenda o relatório matinal às 9h BRT.
+    Modo scheduled: roda o bot de chat E agenda o relatório matinal às 9h BRT
+    com lembretes automáticos 30 minutos antes de cada jogo.
     BOT_MODE=scheduled no Railway.
     """
+    # APScheduler para lembretes dinâmicos por jogo
+    apscheduler = BackgroundScheduler(timezone=UTC)
+    apscheduler.start()
+    logging.info("APScheduler iniciado.")
+
     # Horário 9h BRT = 12h UTC
     schedule_time_utc = "12:00"
     logging.info("Agendando relatório matinal para 09:00 BRT (12:00 UTC) todos os dias.")
 
     def job() -> None:
         try:
-            send_morning_report(settings)
+            send_morning_report(settings, apscheduler)
         except Exception as exc:
             logging.error("Erro no job do relatório matinal: %s", exc, exc_info=True)
 
     schedule.every().day.at(schedule_time_utc).do(job)
 
-    # Roda o scheduler em thread separada para não bloquear o bot de chat
+    # Roda o scheduler de horário fixo em thread separada
     import threading
 
     def run_scheduler() -> None:
-        logging.info("Scheduler iniciado.")
+        logging.info("Scheduler de horário fixo iniciado.")
         while True:
             schedule.run_pending()
             time.sleep(30)
@@ -1153,7 +1281,7 @@ def run_scheduled_bot(settings: Settings) -> None:
     scheduler_thread.start()
 
     # Inicia o bot de chat normalmente
-    logging.info("Iniciando bot de chat com relatório matinal agendado.")
+    logging.info("Iniciando bot de chat com relatório matinal e lembretes agendados.")
     run_chat_bot(settings)
 
 
