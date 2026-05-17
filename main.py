@@ -1256,9 +1256,9 @@ def run_scheduled_bot(settings: Settings) -> None:
     apscheduler.start()
     logging.info("APScheduler iniciado.")
 
-    # Horário 9h BRT = 12h UTC
-    schedule_time_utc = "12:00"
-    logging.info("Agendando relatório matinal para 09:00 BRT (12:00 UTC) todos os dias.")
+    # Horário 7h BRT = 10h UTC
+    schedule_time_utc = "10:00"
+    logging.info("Agendando relatório matinal para 07:00 BRT (10:00 UTC) todos os dias.")
 
     def job() -> None:
         try:
