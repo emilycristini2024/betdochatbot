@@ -925,7 +925,8 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
-    await update.message.reply_text(reply)
+    for chunk in split_message(reply):
+        await update.message.reply_text(chunk)
 
 
 async def post_init(application: Application) -> None:
