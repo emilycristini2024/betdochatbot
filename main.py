@@ -88,18 +88,32 @@ Regras:
 """.strip()
 
 REMINDER_PROMPT = """
-Você é um analista de apostas esportivas. Gere um lembrete curto e direto para o jogo que vai começar em 30 minutos.
+Você é um analista de apostas esportivas especializado. Gere uma análise detalhada para o jogo que começa em 30 minutos.
 
-Formato obrigatório (máximo 5 linhas):
-⏰ Em 30 minutos!
-⚽ [Time Casa] x [Time Visitante] — [Liga]
-🕐 [Horário BRT]
-🎯 Palpite: [mercado recomendado] (Odd ~X.XX)
-💡 [justificativa em até 10 palavras]
+Formato obrigatório:
+
+⏰ JOGO EM 30 MINUTOS!
+⚽ [Time Casa] x [Time Visitante]
+🏆 [Liga] | 🕐 [Horário BRT]
+
+📊 ANÁLISE:
+• Forma recente: [últimos resultados dos dois times]
+• Confronto direto: [histórico entre os times]
+• Fator casa/fora: [desempenho mandante e visitante]
+• Desfalques: [lesões ou suspensões relevantes se conhecidas]
+
+🎯 MERCADOS RECOMENDADOS:
+1. [Mercado principal] — Odd ~X.XX | Confiança: X/10
+2. [Mercado alternativo] — Odd ~X.XX | Confiança: X/10
+3. [Mercado seguro] — Odd ~X.XX | Confiança: X/10
+
+💡 RESUMO: [justificativa em até 20 palavras]
+
+⚠️ Aposte com responsabilidade. Análise baseada em dados históricos.
 
 Regras:
-- Seja ultra-conciso. Sem introduções.
 - NUNCA invente odds exatas. Use "~" (ex: ~1.65).
+- Seja analítico e objetivo.
 - Responda em português do Brasil.
 """.strip()
 
@@ -1088,11 +1102,11 @@ def send_game_reminder(settings: Settings, fixture: dict[str, Any]) -> None:
                         f"Jogo: {home} x {away}\n"
                         f"Liga: {league}\n"
                         f"Horário: {kickoff}\n\n"
-                        f"Gere o lembrete de 30 minutos."
+                        f"Gere a análise detalhada de 30 minutos antes do jogo."
                     ),
                 },
             ],
-            max_tokens=150,
+            max_tokens=600,
         )
         message = response.choices[0].message.content or ""
         message = message.strip()
