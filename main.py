@@ -1151,38 +1151,55 @@ def schedule_game_reminders(
         if not kickoff_str:
             continue
 
-        # Parse do horário — formato "YYYY-MM-DD HH:MM BRT"
-        try:
-            # Remove o sufixo " BRT" e converte para UTC
-            clean = kickoff_str.replace(" BRT", "").strip()
-            kickoff_brt = datetime.strptime(clean, "%Y-%m-%d %H:%M")
-            # BRT = UTC-3
-            kickoff_utc = kickoff_brt.replace(tzinfo=timezone(timedelta(hours=-3))).astimezone(UTC)
-        except ValueError:
-            logging.warning("Não foi possível parsear horário: %s", kickoff_str)
+        # Parse do horário — suporta múltiplos formatos
+        kickoff_utc: datetime | None = None
+        formats_to_try = [
+            ("%Y-%m-%d %H:%M BRT", timezone(timedelta(hours=-3))),
+            ("%Y-%m-%d %H:%M:%S BRT", timezone(timedelta(hours=-3))),
+            ("%Y-%m-%d %H:%M", timezone(timedelta(hours=-3))),
+            ("%Y-%m-%dT%H:%M:%S%z", None),  # ISO com timezone
+            ("%Y-%m-%dT%H:%M:%S", timezone(timedelta(hours=-3))),
+        ]
+
+        for fmt, tz in formats_to_try:
+            try:
+                clean = kickoff_str.replace(" BRT", "").strip()
+                dt = datetime.strptime(clean, fmt.replace(" BRT", "").strip())
+                if tz:
+                    kickoff_utc = dt.replace(tzinfo=tz).astimezone(UTC)
+                else:
+                    kickoff_utc = dt.astimezone(UTC) if dt.tzinfo else dt.replace(tzinfo=UTC)
+                break
+            except ValueError:
+                continue
+
+        if kickoff_utc is None:
+            logging.warning("Não foi possível parsear horário '%s' — lembrete ignorado", kickoff_str)
             continue
 
         # Agenda 30 minutos antes
         reminder_time = kickoff_utc - timedelta(minutes=30)
 
-        # Só agenda se ainda está no futuro (com margem de 1 minuto)
-        if reminder_time <= now_utc + timedelta(minutes=1):
+        home = fixture.get("home", "?")
+        away = fixture.get("away", "?")
+
+        # Só agenda se ainda está no futuro (com margem de 2 minutos)
+        if reminder_time <= now_utc + timedelta(minutes=2):
             logging.info(
-                "Lembrete de %s x %s ignorado (horário já passou: %s)",
-                fixture.get("home"), fixture.get("away"), reminder_time,
+                "Lembrete de %s x %s ignorado (horário já passou: %s UTC)",
+                home, away, reminder_time.strftime("%H:%M"),
             )
             continue
 
-        home = fixture.get("home", "?")
-        away = fixture.get("away", "?")
+        job_id = f"reminder_{home}_{away}_{kickoff_str}".replace(" ", "_").replace("/", "-")
 
         apscheduler.add_job(
             send_game_reminder,
             trigger=DateTrigger(run_date=reminder_time),
             args=[settings, fixture],
-            id=f"reminder_{home}_{away}_{kickoff_str}".replace(" ", "_"),
+            id=job_id,
             replace_existing=True,
-            misfire_grace_time=300,  # 5 min de tolerância
+            misfire_grace_time=600,  # 10 min de tolerância
         )
         logging.info(
             "Lembrete agendado: %s x %s às %s UTC (kickoff %s)",
@@ -1274,7 +1291,7 @@ def send_morning_report(settings: Settings, apscheduler: "BackgroundScheduler | 
 
 def run_scheduled_bot(settings: Settings) -> None:
     """
-    Modo scheduled: roda o bot de chat E agenda o relatório matinal às 9h BRT
+    Modo scheduled: roda o bot de chat E agenda o relatório matinal às 7h BRT
     com lembretes automáticos 30 minutos antes de cada jogo.
     BOT_MODE=scheduled no Railway.
     """
@@ -1294,6 +1311,23 @@ def run_scheduled_bot(settings: Settings) -> None:
             logging.error("Erro no job do relatório matinal: %s", exc, exc_info=True)
 
     schedule.every().day.at(schedule_time_utc).do(job)
+
+    # Se o bot reiniciou depois das 7h BRT, re-agenda os lembretes do dia
+    now_brt = get_current_datetime(settings.timezone)
+    report_time_brt = now_brt.replace(hour=7, minute=0, second=0, microsecond=0)
+    if now_brt > report_time_brt:
+        logging.info("Bot iniciado após 07h BRT — re-agendando lembretes do dia...")
+        try:
+            today = now_brt.strftime("%Y-%m-%d")
+            sportsdb = SportsDbClient()
+            fixtures = sportsdb.get_fixtures_for_date(today)
+            if fixtures:
+                count = schedule_game_reminders(settings, fixtures[:settings.max_fixtures], apscheduler)
+                logging.info("Re-agendados %d lembretes para hoje (%s).", count, today)
+            else:
+                logging.info("Nenhum jogo encontrado para re-agendar hoje.")
+        except Exception as exc:
+            logging.warning("Erro ao re-agendar lembretes: %s", exc)
 
     # Roda o scheduler de horário fixo em thread separada
     import threading
