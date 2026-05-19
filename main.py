@@ -864,6 +864,16 @@ async def send_to_telegram(token: str, chat_id: str, message: str) -> None:
             await bot.send_message(chat_id=chat_id, text=chunk)
 
 
+def send_to_telegram_sync(token: str, chat_id: str, message: str) -> None:
+    """Versão síncrona segura — cria novo event loop para evitar conflito com o loop do bot."""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(send_to_telegram(token, chat_id, message))
+    finally:
+        loop.close()
+
+
 def build_no_games_message(target_date: str) -> str:
     return f"Nenhuma partida encontrada para {target_date} nas ligas configuradas."
 
@@ -1025,7 +1035,7 @@ def run_cron_bot(settings: Settings) -> None:
         except FootballApiRateLimitError as exc:
             logging.warning("%s", exc)
             message = build_rate_limit_message(settings.target_date)
-            asyncio.run(send_to_telegram(settings.telegram_token, settings.telegram_chat_id, message))
+            send_to_telegram_sync(settings.telegram_token, settings.telegram_chat_id, message)
             logging.info("Fluxo finalizado com aviso de limite da API")
             return
         except Exception as exc:
@@ -1052,17 +1062,15 @@ def run_cron_bot(settings: Settings) -> None:
             logging.info("LLM respondeu com sucesso.")
         except Exception as exc:
             logging.error("Erro ao chamar LLM: %s", exc, exc_info=True)
-            asyncio.run(
-                send_to_telegram(
+            send_to_telegram_sync(
                     settings.telegram_token,
                     settings.telegram_chat_id,
                     f"❌ Erro ao gerar análise: {exc}",
                 )
-            )
             return
 
     logging.info("Enviando mensagem para o Telegram...")
-    asyncio.run(send_to_telegram(settings.telegram_token, settings.telegram_chat_id, message))
+    send_to_telegram_sync(settings.telegram_token, settings.telegram_chat_id, message)
     logging.info("Fluxo finalizado com sucesso")
 
 
@@ -1080,17 +1088,15 @@ def _send_cron_analysis(settings: Settings, cleaned_payload: list[dict[str, Any]
         logging.info("LLM respondeu com sucesso.")
     except Exception as exc:
         logging.error("Erro ao chamar LLM: %s", exc, exc_info=True)
-        asyncio.run(
-            send_to_telegram(
+        send_to_telegram_sync(
                 settings.telegram_token,
                 settings.telegram_chat_id,
                 f"❌ Erro ao gerar análise: {exc}",
             )
-        )
         return
 
     logging.info("Enviando mensagem para o Telegram...")
-    asyncio.run(send_to_telegram(settings.telegram_token, settings.telegram_chat_id, message))
+    send_to_telegram_sync(settings.telegram_token, settings.telegram_chat_id, message)
     logging.info("Fluxo finalizado com sucesso")
 
 
@@ -1131,7 +1137,15 @@ def send_game_reminder(settings: Settings, fixture: dict[str, Any]) -> None:
             f"🕐 {kickoff}"
         )
 
-    asyncio.run(send_to_telegram(settings.telegram_token, settings.telegram_chat_id, message))
+    # Usa novo loop para evitar conflito com loop do bot de chat
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(
+            send_to_telegram(settings.telegram_token, settings.telegram_chat_id, message)
+        )
+    finally:
+        loop.close()
 
 
 def schedule_game_reminders(
@@ -1249,7 +1263,7 @@ def send_morning_report(settings: Settings, apscheduler: "BackgroundScheduler | 
 
     if not fixtures:
         message = f"📋 Relatório matinal {today}\n\nNenhuma partida encontrada nas ligas configuradas."
-        asyncio.run(send_to_telegram(settings.telegram_token, settings.telegram_chat_id, message))
+        send_to_telegram_sync(settings.telegram_token, settings.telegram_chat_id, message)
         return
 
     # Gera o relatório via LLM
@@ -1280,7 +1294,7 @@ def send_morning_report(settings: Settings, apscheduler: "BackgroundScheduler | 
         report = f"❌ Erro ao gerar relatório matinal: {exc}"
 
     header = f"🌅 BetChat — Relatório Matinal {today}\n\n"
-    asyncio.run(send_to_telegram(settings.telegram_token, settings.telegram_chat_id, header + report))
+    send_to_telegram_sync(settings.telegram_token, settings.telegram_chat_id, header + report)
     logging.info("Relatório matinal enviado para o Telegram.")
 
     # Agenda lembretes 30 min antes de cada jogo
