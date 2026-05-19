@@ -1314,6 +1314,15 @@ def send_morning_report(settings: Settings, apscheduler: "BackgroundScheduler | 
         report = f"❌ Erro ao gerar relatório matinal: {exc}"
 
     header = f"🌅 BetChat — Relatório Matinal {today}\n\n"
+
+    # Aviso quando há menos de 10 jogos disponíveis
+    total = len(fixtures[:settings.max_fixtures])
+    if total < 10:
+        header += (
+            f"⚠️ Hoje encontramos apenas {total} jogo(s) nas ligas monitoradas. "
+            f"Em dias com poucos jogos a cobertura pode ser limitada.\n\n"
+        )
+
     send_to_telegram_sync(settings.telegram_token, settings.telegram_chat_id, header + report)
     logging.info("Relatório matinal enviado para o Telegram.")
 
