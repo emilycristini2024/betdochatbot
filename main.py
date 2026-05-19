@@ -32,6 +32,25 @@ SPORTSDB_LEAGUE_IDS = [
     4406,  # Liga MX
     4480,  # Eredivisie
     4344,  # Primeira Liga (Portugal)
+    4346,  # Championship (Inglaterra)
+    4329,  # FA Cup
+    4399,  # MLS (EUA)
+    4350,  # Argentino Primera División
+    4397,  # Copa Libertadores
+    4480,  # Eredivisie
+    4356,  # Ekstraklasa (Polônia)
+    4337,  # Super Lig (Turquia)
+    4480,  # Allsvenskan (Suécia) — id 4607
+    4607,  # Allsvenskan (Suécia)
+    4354,  # Eliteserien (Noruega)
+    4333,  # Bundesliga 2 (Alemanha)
+    4336,  # Segunda División (Espanha)
+    4338,  # Serie B (Itália)
+    4339,  # Ligue 2 (França)
+    4347,  # Brasileirão Série B
+    4353,  # Liga Colombiana
+    4355,  # Liga Chilena
+    4358,  # Liga Peruana
 ]
 
 DEFAULT_SYSTEM_PROMPT = """
@@ -80,7 +99,8 @@ FORMATO OBRIGATÓRIO para cada jogo (siga rigorosamente):
 • Confiança: [X]/10
 
 REGRAS:
-- Selecione os 10 jogos com maior valor esperado do JSON. Se houver menos de 10, analise todos.
+- Selecione os jogos com maior valor esperado do JSON. Se houver menos de 10, analise TODOS os disponíveis e informe quantos há.
+- NUNCA invente jogos que não estejam no JSON. Se só há 3 jogos, analise 3.
 - Vá direto ao primeiro jogo. Sem introduções ou saudações.
 - NUNCA invente odds exatas. Use "~" (ex: ~1.65).
 - NUNCA invente jogos. Use APENAS os do JSON.
