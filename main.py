@@ -53,6 +53,8 @@ SPORTSDB_LEAGUE_IDS = [
     4358,  # Liga Peruana
 ]
 
+MORNING_REPORT_MEMORY: dict[str, str] = {}
+
 DEFAULT_SYSTEM_PROMPT = """
 Voce e um Trader Esportivo de elite e analista quantitativo. Sua missao e ler o JSON de partidas e estatisticas fornecido e selecionar as 10 melhores oportunidades de aposta do dia.
 
@@ -89,12 +91,15 @@ ESTRATÉGIAS QUE VOCÊ APLICA (em ordem de prioridade):
 3. AMBAS MARCAM (BTTS): recomende "Sim" quando ambos os times marcaram em >60% dos últimos jogos. "Não" quando algum time tem ataque fraco ou defesa muito sólida.
 4. HANDICAP ASIÁTICO: use quando há favoritismo claro. Favorito -0.5 quando vence >65% dos jogos em casa/fora. Azarão +0.5 quando há valor percebido.
 5. GESTÃO DE BANCA: sugira stake de 1 a 3 unidades por aposta (1=baixa confiança, 2=média, 3=alta). Nunca sugira apostar mais de 5% da banca em um único jogo.
+6. VITÓRIA SECA (Moneyline): só recomende quando a confiança for 8/10 ou maior e não houver desfalque defensivo crítico confirmado no favorito. Se houver dúvida, prefira Empate Anula ou Handicap Asiático.
+7. PADRÃO TÉCNICO: use xG, posse de bola e finalizações sempre que esses dados estiverem no JSON. Se não estiverem, escreva "Informação não disponível no momento." e não invente.
 
 FORMATO OBRIGATÓRIO para cada jogo (siga rigorosamente):
 
 ⚽ [Liga]
 👉 [Time Casa] x [Time Visitante] | 🕐 [Horário BRT]
 • Análise: [forma recente + estatística chave que justifica o palpite]
+• Dados-chave: [xG + posse + finalizações disponíveis ou "Informação não disponível no momento."]
 • Mercado: [tipo de aposta] | Odd ~[valor] | Stake: [X] unidade(s)
 • Confiança: [X]/10
 
@@ -104,6 +109,8 @@ REGRAS:
 - Vá direto ao primeiro jogo. Sem introduções ou saudações.
 - NUNCA invente odds exatas. Use "~" (ex: ~1.65).
 - NUNCA invente jogos. Use APENAS os do JSON.
+- Para Moneyline/Vitória Seca, aplique confiança mínima 8/10 e valide risco defensivo. Sem confirmação suficiente, use Empate Anula ou Handicap Asiático.
+- Mantenha xG, posse de bola e finalizações no relatório quando os dados existirem. Se não existirem, informe indisponibilidade sem inferir.
 - Ao final, adicione:
 
 📊 RESUMO DO DIA:
@@ -126,6 +133,9 @@ REGRAS IMPORTANTES:
 - Verifique se os jogadores ainda pertencem ao clube atual antes de citar nomes.
 - Não crie desfalques fictícios.
 - Não gere odds falsas.
+- Compare este pré-jogo com o Relatório Matinal recebido no contexto. Se mudar a recomendação (ex: Under para Over, BTTS Não para Sim, Moneyline para Handicap), justifique obrigatoriamente o motivo usando apenas novos dados confirmados. Se não houver novo dado confirmado, mantenha a linha original ou informe que não há base para alterar.
+- Para Vitória Seca/Moneyline, exija confiança mínima de 8/10 e confirme que o favorito não tem desfalque defensivo crítico. Se houver dúvida ou dado ausente, prefira Empate Anula ou Handicap Asiático.
+- Use xG, posse de bola e finalizações sempre que esses dados estiverem disponíveis. Se não estiverem, escreva "Informação não disponível no momento." e não infira.
 
 OBJETIVO: Gerar análises pré-jogo organizadas, claras e objetivas para apostas esportivas.
 
@@ -142,6 +152,8 @@ FORMATO DA RESPOSTA:
   - Média de gols marcados
   - Média de gols sofridos
   - xG (se disponível)
+  - Posse de bola (se disponível)
+  - Finalizações (se disponível)
   - Jogos com BTTS
   - Over 2.5
 • Confronto direto: [Últimos confrontos reais disponíveis na API ou "Informação não disponível no momento."]
@@ -157,6 +169,7 @@ FORMATO DA RESPOSTA:
 - Não criar análises genéricas.
 - Não usar frases automáticas repetitivas.
 - Não recomendar apostas de alto risco sem justificativa estatística.
+- Não trocar a recomendação do Relatório Matinal sem explicar o dado novo que motivou a mudança.
 
 ANTES DE FINALIZAR — verificação interna obrigatória:
 ✓ Os jogadores citados ainda jogam nesses clubes?
@@ -191,6 +204,8 @@ INSTRUÇÕES CRÍTICAS (OBRIGATÓRIAS):
 6. NUNCA recuse analisar futebol.
 7. Seja opinativo: "Este jogo tem valor em Over 2.5 porque..." (não genérico).
 8. Responda saudações com entusiasmo, mas sempre pronto para análises.
+9. Para Vitória Seca/Moneyline, só recomende com confiança mínima 8/10 e sem desfalque defensivo crítico confirmado no favorito. Se houver dúvida, prefira Empate Anula ou Handicap Asiático.
+10. Use xG, posse de bola e finalizações quando estiverem nos dados recebidos. Se não estiverem, diga que a informação não está disponível e não invente.
 
 EXEMPLO DE RESPOSTA IDEAL:
 ⚽ Bayern x Frankfurt — Bundesliga
@@ -240,6 +255,8 @@ RESTRIÇÕES:
 - NUNCA invente odds numéricas. Use "~1.75", "próximo de 1.80".
 - NUNCA adicione jogos além dos do JSON.
 - NUNCA calcule ou assuma datas por conta própria.
+- Para Vitória Seca/Moneyline, exija confiança mínima 8/10 e ausência de desfalque defensivo crítico confirmado. Se faltar dado, prefira Empate Anula ou Handicap Asiático.
+- Use xG, posse de bola e finalizações quando o JSON trouxer esses campos. Se não trouxer, informe indisponibilidade.
 - SEMPRE responda em português do Brasil.
 """.strip()
 
@@ -460,6 +477,7 @@ class SportsDbClient:
             "country": event.get("strCountry", ""),
             "home": event.get("strHomeTeam", ""),
             "away": event.get("strAwayTeam", ""),
+            "technical_metrics": unavailable_technical_metrics(),
             "source": "thesportsdb",
         }
 
@@ -564,6 +582,14 @@ def serialize_form(value: str | None) -> str:
     return value[-5:]
 
 
+def unavailable_technical_metrics() -> dict[str, str]:
+    return {
+        "xg": "Informacao nao disponivel no momento.",
+        "possession": "Informacao nao disponivel no momento.",
+        "shots": "Informacao nao disponivel no momento.",
+    }
+
+
 def pick_bookmaker(
     odds_payload: list[dict[str, Any]],
     preferred_name: str,
@@ -654,6 +680,7 @@ def simplify_fixture(
             away_stats,
             "away",
         ),
+        "technical_metrics": unavailable_technical_metrics(),
         "odds": {
             "bookmaker": bookmaker.get("name") if bookmaker else None,
             **extract_market_odds(bookmaker),
@@ -782,6 +809,7 @@ def get_fixtures_for_chat(settings: Settings, target_date: str) -> tuple[list[di
                         "league": league.get("name") or LEAGUE_NAMES.get(league.get("id"), "Liga"),
                         "home": teams.get("home", {}).get("name"),
                         "away": teams.get("away", {}).get("name"),
+                        "technical_metrics": unavailable_technical_metrics(),
                         "source": "football_api",
                     })
                 logging.info("API-Football retornou %d jogos para %s", len(result), target_date)
@@ -808,6 +836,8 @@ def ask_llm_for_predictions(
     client = OpenAI(api_key=api_key, base_url=base_url)
     user_prompt = (
         "Analise as partidas abaixo e retorne os melhores palpites no formato pedido.\n\n"
+        "Use xG, posse de bola e finalizacoes quando existirem no JSON. "
+        "Se estiverem indisponiveis, informe isso sem inventar dados.\n\n"
         f"{json.dumps(cleaned_payload, ensure_ascii=False, indent=2)}"
     )
     response = client.chat.completions.create(
@@ -852,7 +882,8 @@ def ask_llm_for_chat_reply(
                 f"FONTE: {source_label}\n\n"
                 f"{fixtures_json}\n\n"
                 f"Analise cada um dos {len(fixtures_context)} jogos acima. "
-                f"Todos são do dia {date_label}."
+                f"Todos são do dia {date_label}. "
+                f"Use xG, posse de bola e finalizacoes quando existirem no JSON; se estiverem indisponiveis, informe isso sem inventar."
             ),
         })
     else:
@@ -922,6 +953,28 @@ def build_rate_limit_message(target_date: str) -> str:
         f"BetChat nao conseguiu concluir a analise de {target_date} porque a cota da API-Football foi atingida. "
         "Tente novamente mais tarde ou reduza MAX_FIXTURES."
     )
+
+
+def remember_morning_report(target_date: str, report: str) -> None:
+    """Guarda o relatorio matinal para comparar com lembretes do mesmo dia."""
+    if report.strip():
+        MORNING_REPORT_MEMORY[target_date] = report.strip()
+
+
+def get_fixture_date(fixture: dict[str, Any], timezone_name: str) -> str:
+    kickoff = str(fixture.get("kickoff") or "")
+    match = re.search(r"\d{4}-\d{2}-\d{2}", kickoff)
+    if match:
+        return match.group(0)
+    return get_current_datetime(timezone_name).strftime("%Y-%m-%d")
+
+
+def get_morning_report_context(fixture: dict[str, Any], settings: Settings) -> str:
+    target_date = get_fixture_date(fixture, settings.timezone)
+    report = MORNING_REPORT_MEMORY.get(target_date, "").strip()
+    if not report:
+        return "Relatorio Matinal nao encontrado em memoria para este jogo."
+    return report[:6000]
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1145,6 +1198,7 @@ def send_game_reminder(settings: Settings, fixture: dict[str, Any]) -> None:
     away = fixture.get("away", "?")
     league = fixture.get("league", "?")
     kickoff = fixture.get("kickoff", "")
+    morning_report_context = get_morning_report_context(fixture, settings)
 
     logging.info("Enviando lembrete: %s x %s", home, away)
 
@@ -1160,9 +1214,12 @@ def send_game_reminder(settings: Settings, fixture: dict[str, Any]) -> None:
                         f"Jogo: {home} x {away}\n"
                         f"Liga: {league}\n"
                         f"Horário: {kickoff}\n\n"
+                        f"RELATORIO MATINAL DO DIA (memoria para consistencia):\n"
+                        f"{morning_report_context}\n\n"
                         f"DADOS DISPONÍVEIS DA API: apenas nome dos times, liga e horário.\n"
-                        f"DADOS NÃO DISPONÍVEIS: desfalques, lesões, escalações, estatísticas detalhadas, xG.\n"
+                        f"DADOS NÃO DISPONÍVEIS: desfalques, lesões, escalações, estatísticas detalhadas, xG, posse de bola, finalizações.\n"
                         f"Para qualquer dado não disponível, escreva 'Informação não disponível no momento.'\n"
+                        f"Se a recomendação mudar em relação ao Relatório Matinal, explique o dado novo confirmado que motivou a mudança.\n"
                         f"NÃO invente nenhuma informação. Gere a análise pré-jogo."
                     ),
                 },
@@ -1291,6 +1348,7 @@ def send_morning_report(settings: Settings, apscheduler: "BackgroundScheduler | 
                     "league": f.get("league", {}).get("name") or LEAGUE_NAMES.get(f.get("league", {}).get("id"), "Liga"),
                     "home": f.get("teams", {}).get("home", {}).get("name"),
                     "away": f.get("teams", {}).get("away", {}).get("name"),
+                    "technical_metrics": unavailable_technical_metrics(),
                 }
                 for f in raw[:settings.max_fixtures]
             ]
@@ -1323,6 +1381,8 @@ def send_morning_report(settings: Settings, apscheduler: "BackgroundScheduler | 
                         f"DATA: {today}\n"
                         f"JOGOS DO DIA ({len(fixtures[:settings.max_fixtures])} partidas):\n"
                         f"{fixtures_json}\n\n"
+                        f"Use xG, posse de bola e finalizacoes quando os campos estiverem disponiveis. "
+                        f"Quando vierem como indisponiveis, declare a indisponibilidade e nao invente.\n"
                         f"Gere o relatório matinal com os palpites do dia."
                     ),
                 },
@@ -1334,6 +1394,9 @@ def send_morning_report(settings: Settings, apscheduler: "BackgroundScheduler | 
     except Exception as exc:
         logging.error("Erro ao gerar relatório matinal: %s", exc)
         report = f"❌ Erro ao gerar relatório matinal: {exc}"
+
+    if "Erro ao gerar relatório matinal" not in report:
+        remember_morning_report(today, report)
 
     header = f"🌅 BetChat — Relatório Matinal {today}\n\n"
 
