@@ -1,0 +1,117 @@
+import logging
+from datetime import UTC, datetime, timedelta, timezone
+from typing import Any
+
+import requests
+
+from .football_api import unavailable_technical_metrics
+
+SPORTSDB_BASE_URL = "https://www.thesportsdb.com/api/v1/json/123"
+
+SPORTSDB_LEAGUE_IDS = [
+    4328, 4335, 4332, 4331, 4334, 4351, 4406, 4480,
+    4344, 4346, 4329, 4399, 4350, 4397, 4356, 4337,
+    4607, 4354, 4333, 4336, 4338, 4339, 4347, 4353,
+    4355, 4358,
+]
+
+
+class SportsDbClient:
+    """Cliente para a TheSportsDB API (gratuita, sem chave)."""
+
+    def __init__(self) -> None:
+        self.session = requests.Session()
+        self.session.headers.update({"User-Agent": "BetChat/1.0"})
+
+    def get_fixtures_by_date(self, date: str) -> list[dict[str, Any]]:
+        try:
+            response = self.session.get(
+                f"{SPORTSDB_BASE_URL}/eventsday.php",
+                params={"d": date, "s": "Soccer"},
+                timeout=15,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("events") or []
+        except Exception as exc:
+            logging.warning("TheSportsDB eventsday falhou: %s", exc)
+            return []
+
+    def get_next_fixtures_by_league(self, league_id: int) -> list[dict[str, Any]]:
+        try:
+            response = self.session.get(
+                f"{SPORTSDB_BASE_URL}/eventsnextleague.php",
+                params={"id": league_id},
+                timeout=15,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("events") or []
+        except Exception as exc:
+            logging.warning("TheSportsDB eventsnextleague(%s) falhou: %s", league_id, exc)
+            return []
+
+    def get_fixtures_for_date(self, target_date: str) -> list[dict[str, Any]]:
+        """
+        Estratégia combinada:
+        1. Tenta eventsday diretamente
+        2. Complementa com próximos jogos por liga, filtrando pela data
+        """
+        day_fixtures = self.get_fixtures_by_date(target_date)
+        logging.info(
+            "TheSportsDB eventsday retornou %d jogos para %s",
+            len(day_fixtures), target_date,
+        )
+
+        result = []
+        seen_ids: set[str] = set()
+
+        for e in day_fixtures:
+            if e.get("dateEvent", "") == target_date:
+                normalized = self._normalize_event(e)
+                result.append(normalized)
+                if normalized.get("event_id"):
+                    seen_ids.add(str(normalized["event_id"]))
+
+        logging.info("Complementando com eventsnextleague para %s...", target_date)
+        for league_id in SPORTSDB_LEAGUE_IDS:
+            league_events = self.get_next_fixtures_by_league(league_id)
+            for event in league_events:
+                event_date = event.get("dateEvent", "")
+                event_id = str(event.get("idEvent", ""))
+                if event_date == target_date and event_id not in seen_ids:
+                    result.append(self._normalize_event(event))
+                    seen_ids.add(event_id)
+
+        logging.info(
+            "TheSportsDB total combinado: %d jogos para %s",
+            len(result), target_date,
+        )
+        return result
+
+    def _normalize_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        time_utc = event.get("strTime") or event.get("strTimeLocal") or ""
+        kickoff_brt = self._convert_time_to_brt(event.get("dateEvent", ""), time_utc)
+
+        return {
+            "event_id": event.get("idEvent"),
+            "kickoff": kickoff_brt,
+            "league": event.get("strLeague", ""),
+            "country": event.get("strCountry", ""),
+            "home": event.get("strHomeTeam", ""),
+            "away": event.get("strAwayTeam", ""),
+            "technical_metrics": unavailable_technical_metrics(),
+            "source": "thesportsdb",
+        }
+
+    def _convert_time_to_brt(self, date_str: str, time_utc: str) -> str:
+        if not date_str or not time_utc:
+            return date_str or ""
+        try:
+            time_clean = time_utc.split("+")[0].strip()
+            dt_utc = datetime.strptime(f"{date_str} {time_clean}", "%Y-%m-%d %H:%M:%S")
+            dt_utc = dt_utc.replace(tzinfo=UTC)
+            dt_brt = dt_utc.astimezone(timezone(timedelta(hours=-3)))
+            return dt_brt.strftime("%Y-%m-%d %H:%M BRT")
+        except Exception:
+            return f"{date_str} {time_utc}"
