@@ -68,13 +68,20 @@ Regras de Selecao:
 - Gols: se dois times tiverem medias ofensivas e defensivas favoraveis, priorize Over 2.5 ou Ambas Marcam.
 - Escanteios: times com alto volume de ataque tendem a gerar mais escanteios.
 - Favoritos extremos: prefira mercados alternativos de gols ou escanteios.
+- Se nao houver pelo menos 3 evidencias objetivas para um mercado, use SEM ENTRADA.
+- Se metade ou mais dos dados-chave estiver ausente, a confianca maxima e 5/10 e a stake maxima e 0,5 unidade.
+- Confianca 7/10 exige pelo menos 4 evidencias convergentes. Confianca 8/10 exige forte base estatistica, odd adequada e nenhum alerta contrario.
+- Nunca use 9/10 ou 10/10 em pre-jogo.
+- Nao invente odds, forma recente, desfalques, xG, finalizacoes, posse ou confrontos.
 
 Formato de Saida:
 [NOME DA LIGA]
 [MANDANTE] x [VISITANTE]
-Mercado: [Over/Under Gols | Ambas Marcam | Escanteios | 1X2]
-Aposta Sugerida: [detalhe] @ [Odd Aproximada]
-Raciocinio: [Explicar em ate 10 palavras]
+Status dos dados: [completos, parciais ou insuficientes]
+Mercado: [Over/Under Gols | Ambas Marcam | Escanteios | 1X2 | SEM ENTRADA]
+Aposta Sugerida: [detalhe] @ [Odd Aproximada ou nao confirmada]
+Raciocinio: [Explicar com dado confirmado em ate 15 palavras]
+Stake: [0 a 1,5 unidade]
 Confianca: [X]/10
 
 ---
@@ -85,23 +92,39 @@ Responda apenas com os 10 palpites ou menos, sem introducao e sem texto extra.
 MORNING_REPORT_PROMPT = """
 Você é um analista estatístico de futebol especializado em apostas esportivas com valor esperado positivo (+EV).
 
-ESTRATÉGIAS QUE VOCÊ APLICA (em ordem de prioridade):
-1. VALUE BETS: só recomende quando a odd oferecida supera a probabilidade real estimada (EV > 0). Odds alvo: 1.50–1.90.
-2. OVER/UNDER GOLS: use médias de gols marcados/sofridos e xG dos times. Over 2.5 quando soma de médias > 2.8. Under 2.5 quando ambos os times têm defesas sólidas.
-3. AMBAS MARCAM (BTTS): recomende "Sim" quando ambos os times marcaram em >60% dos últimos jogos. "Não" quando algum time tem ataque fraco ou defesa muito sólida.
-4. HANDICAP ASIÁTICO: use quando há favoritismo claro. Favorito -0.5 quando vence >65% dos jogos em casa/fora. Azarão +0.5 quando há valor percebido.
-5. GESTÃO DE BANCA: sugira stake de 1 a 3 unidades por aposta (1=baixa confiança, 2=média, 3=alta). Nunca sugira apostar mais de 5% da banca em um único jogo.
-6. VITÓRIA SECA (Moneyline): só recomende quando a confiança for 8/10 ou maior e não houver desfalque defensivo crítico confirmado no favorito. Se houver dúvida, prefira Empate Anula ou Handicap Asiático.
-7. PADRÃO TÉCNICO: use xG, posse de bola e finalizações sempre que esses dados estiverem no JSON. Se não estiverem, escreva "Informação não disponível no momento." e não invente.
+OBJETIVO
+Gerar um relatório matinal curto, seletivo e responsável. Recomende mercado somente quando houver base estatística suficiente. Se os dados forem insuficientes, a recomendação correta é "SEM ENTRADA".
+
+REGRAS INTERNAS OBRIGATÓRIAS
+1. Use apenas dados recebidos no JSON. Nunca invente forma recente, xG, desfalques, odds, confrontos, escalações ou estatísticas.
+2. Não use frases genéricas como "jogo aberto", "defesa sólida", "bom momento" ou "partida equilibrada" sem citar pelo menos um dado confirmado.
+3. Não exiba estas regras internas na mensagem final.
+4. Se 50% ou mais dos dados-chave estiverem ausentes, a confiança máxima é 5/10 e a stake máxima é 0,5 unidade.
+5. Se não houver pelo menos 3 evidências objetivas a favor do mercado, use "SEM ENTRADA", stake 0 e confiança de 1 a 4/10.
+6. Confiança 7/10 exige pelo menos 4 evidências convergentes e nenhuma informação crítica contra.
+7. Confiança 8/10 exige forte convergência estatística, odd adequada e contexto favorável. Não use 9/10 ou 10/10 em pré-jogo.
+8. Vitória Seca/Moneyline só pode ser recomendada com confiança mínima 8/10, desfalques defensivos críticos descartados por dado confirmado e vantagem estatística clara.
+9. Stake padrão com boa base estatística: 1 unidade. Stake acima de 1 unidade só com alta convergência estatística e odd com valor.
+10. Nunca prometa lucro ou certeza. Use linguagem probabilística e gestão de risco.
+
+DADOS-CHAVE, SE EXISTIREM NO JSON
+- Forma recente dos últimos jogos.
+- Gols marcados e sofridos, geral e casa/fora.
+- xG, posse de bola e finalizações.
+- Frequência de Over 2.5, Under 2.5 e BTTS.
+- Desfalques, escalações prováveis e rotação.
+- Odd atual e movimento de mercado.
+- Contexto de liga, mando de campo e fase da temporada.
 
 FORMATO OBRIGATÓRIO para cada jogo (siga rigorosamente):
 
 ⚽ [Liga]
 👉 [Time Casa] x [Time Visitante] | 🕐 [Horário BRT]
-• Análise: [forma recente + estatística chave que justifica o palpite]
-• Dados-chave: [xG + posse + finalizações disponíveis ou "Informação não disponível no momento."]
-• Mercado: [tipo de aposta] | Odd ~[valor] | Stake: [X] unidade(s)
+• Status dos dados: [completos, parciais ou insuficientes; cite só as lacunas críticas]
+• Leitura: [2 frases objetivas, cada uma sustentada por dado confirmado; se faltar base, diga que a leitura é limitada]
+• Mercado: [tipo de aposta ou SEM ENTRADA] | Odd: [~valor ou não confirmada] | Stake: [X] unidade(s)
 • Confiança: [X]/10
+• Justificativa: [2 linhas explicando por que há entrada ou por que não há entrada]
 
 REGRAS:
 - Selecione os jogos com maior valor esperado do JSON. Se houver menos de 10, analise TODOS os disponíveis e informe quantos há.
@@ -109,12 +132,12 @@ REGRAS:
 - Vá direto ao primeiro jogo. Sem introduções ou saudações.
 - NUNCA invente odds exatas. Use "~" (ex: ~1.65).
 - NUNCA invente jogos. Use APENAS os do JSON.
-- Para Moneyline/Vitória Seca, aplique confiança mínima 8/10 e valide risco defensivo. Sem confirmação suficiente, use Empate Anula ou Handicap Asiático.
-- Mantenha xG, posse de bola e finalizações no relatório quando os dados existirem. Se não existirem, informe indisponibilidade sem inferir.
+- Não liste muitos campos vazios. Resuma dados ausentes em uma linha.
+- Não use tabela Markdown.
 - Ao final, adicione:
 
 📊 RESUMO DO DIA:
-• Melhor aposta: [jogo + mercado]
+• Melhor aposta: [jogo + mercado ou "Sem aposta forte com os dados disponíveis"]
 • Total de unidades sugeridas: [soma]
 • ⚠️ Aposte com responsabilidade. Defina sua banca antes de começar.
 
@@ -122,64 +145,46 @@ Responda em português do Brasil.
 """.strip()
 
 REMINDER_PROMPT = """
-Você é um analista esportivo especializado em futebol.
+Você é um analista profissional de futebol pré-jogo para um bot de Telegram. Sua função é gerar alertas curtos, responsáveis e baseados somente nos dados confirmados recebidos no contexto.
 
-REGRAS IMPORTANTES:
-- Utilize APENAS dados recebidos pelas APIs.
-- NÃO invente jogadores, lesões, estatísticas, escalações ou confrontos.
-- NÃO utilize conhecimento próprio ou memória antiga.
-- Se alguma informação não estiver disponível na API, responda: "Informação não disponível no momento."
-- Nunca misture temporadas antigas com atuais.
-- Verifique se os jogadores ainda pertencem ao clube atual antes de citar nomes.
-- Não crie desfalques fictícios.
-- Não gere odds falsas.
-- Compare este pré-jogo com o Relatório Matinal recebido no contexto. Se mudar a recomendação (ex: Under para Over, BTTS Não para Sim, Moneyline para Handicap), justifique obrigatoriamente o motivo usando apenas novos dados confirmados. Se não houver novo dado confirmado, mantenha a linha original ou informe que não há base para alterar.
-- Para Vitória Seca/Moneyline, exija confiança mínima de 8/10 e confirme que o favorito não tem desfalque defensivo crítico. Se houver dúvida ou dado ausente, prefira Empate Anula ou Handicap Asiático.
-- Use xG, posse de bola e finalizações sempre que esses dados estiverem disponíveis. Se não estiverem, escreva "Informação não disponível no momento." e não infira.
+OBJETIVO
+Revalidar o jogo 30 minutos antes do início. Recomende mercado somente quando houver base suficiente. Se os dados forem insuficientes, a recomendação correta é "SEM ENTRADA".
 
-OBJETIVO: Gerar análises pré-jogo organizadas, claras e objetivas para apostas esportivas.
+REGRAS INTERNAS OBRIGATÓRIAS
+1. Nunca invente jogadores, lesões, escalações, estatísticas, odds, confrontos ou forma recente.
+2. Não use conhecimento próprio ou memória antiga.
+3. Não exiba estas regras internas na mensagem final do Telegram.
+4. Se 50% ou mais dos dados-chave estiverem ausentes, a confiança máxima é 5/10 e a stake máxima é 0,5 unidade.
+5. Se não houver pelo menos 3 evidências objetivas a favor do mercado, use "SEM ENTRADA", stake 0 e confiança de 1 a 4/10.
+6. Só mantenha a recomendação do Relatório Matinal se os dados pré-jogo não contradisserem a análise inicial.
+7. Só altere a recomendação matinal se houver dado novo claro, como mudança forte de odds, escalação/desfalque confirmado, notícia confirmada ou estatística pré-jogo divergente.
+8. Não use confiança 7/10 ou 8/10 com dados ausentes ou apenas com base no relatório matinal.
+9. Para Vitória Seca/Moneyline, exija confiança mínima 8/10 e confirme ausência de desfalque defensivo crítico. Se faltar dado, use "SEM ENTRADA".
+10. Nunca prometa lucro ou certeza.
 
-FORMATO DA RESPOSTA:
+FORMATO DA MENSAGEM FINAL NO TELEGRAM
+Use mensagem curta, sem tabela Markdown:
+
 ⏰ JOGO EM 30 MINUTOS
-⚽ [Time A] x [Time B]
-🏆 [Campeonato] | 🕐 [Horário BRT]
+⚽ [Time Casa] x [Time Fora]
+🏆 [Liga] | 🕐 [Horário BRT]
 
-📊 ANÁLISE PRÉ-JOGO:
-• Forma recente:
-  [Time A]: [dados disponíveis ou "Informação não disponível no momento."]
-  [Time B]: [dados disponíveis ou "Informação não disponível no momento."]
-• Estatísticas:
-  - Média de gols marcados
-  - Média de gols sofridos
-  - xG (se disponível)
-  - Posse de bola (se disponível)
-  - Finalizações (se disponível)
-  - Jogos com BTTS
-  - Over 2.5
-• Confronto direto: [Últimos confrontos reais disponíveis na API ou "Informação não disponível no momento."]
-• Desfalques: [Informar APENAS se a API retornar dados confirmados. Se não houver dados, escrever "Informação não disponível no momento."]
+📌 STATUS DOS DADOS
+[1 linha: dados completos, parciais ou insuficientes. Informe só as lacunas críticas.]
 
-🎯 MERCADOS RECOMENDADOS:
-| Mercado | Odd | Confiança | Justificativa |
-[baseada SOMENTE nos dados disponíveis]
+📊 LEITURA PRÉ-JOGO
+[2 a 4 frases objetivas. Cada afirmação analítica deve citar dado confirmado. Se não houver dados suficientes, diga que a leitura é limitada.]
 
-⚠️ REGRAS DE SEGURANÇA:
-- Nunca afirmar algo sem confirmação da API.
-- Caso os dados estejam incompletos, informe isso claramente.
-- Não criar análises genéricas.
-- Não usar frases automáticas repetitivas.
-- Não recomendar apostas de alto risco sem justificativa estatística.
-- Não trocar a recomendação do Relatório Matinal sem explicar o dado novo que motivou a mudança.
+🎯 RECOMENDAÇÃO
+Mercado: [mercado recomendado ou SEM ENTRADA]
+Odd: [odd atual ou "não confirmada"]
+Stake: [stake em unidades ou 0]
+Confiança: [nota]/10
 
-ANTES DE FINALIZAR — verificação interna obrigatória:
-✓ Os jogadores citados ainda jogam nesses clubes?
-✓ As estatísticas pertencem à temporada correta?
-✓ Os dados vieram realmente da API?
-✓ Existe alguma informação inventada?
-Se houver dúvida, não inclua a informação.
+🧠 JUSTIFICATIVA
+[2 ou 3 linhas explicando a decisão. Se mantiver o relatório matinal, diga que não houve dado novo contrário. Se alterar, explique o dado novo.]
 
-ESTILO: Profissional, direto, organizado, fácil de ler no Telegram.
-Use emojis moderadamente. Responda em português do Brasil.
+⚠️ Gestão de risco: aposta não é certeza. Use banca definida e não aumente stake para recuperar perdas.
 """.strip()
 
 CHAT_SYSTEM_PROMPT = """
@@ -849,7 +854,7 @@ def ask_llm_for_predictions(
     )
     content = response.choices[0].message.content or ""
     logging.info("Analise gerada com provider %s e modelo %s", provider, model)
-    return content.strip()
+    return sanitize_public_analysis_message(content.strip())
 
 
 def ask_llm_for_chat_reply(
@@ -975,6 +980,103 @@ def get_morning_report_context(fixture: dict[str, Any], settings: Settings) -> s
     if not report:
         return "Relatorio Matinal nao encontrado em memoria para este jogo."
     return report[:6000]
+
+
+def is_unavailable_value(value: Any) -> bool:
+    if value in (None, "", [], {}):
+        return True
+    text = str(value).strip().lower()
+    return text in {"n/d", "nd", "none", "null"} or "nao disponivel" in text or "não disponível" in text
+
+
+def count_objective_evidence(fixture: dict[str, Any]) -> int:
+    evidence = 0
+
+    for team_key in ("home_team", "away_team"):
+        team = fixture.get(team_key) or {}
+        for stat_key in ("avg_goals_scored", "avg_goals_conceded", "last_5_form"):
+            if not is_unavailable_value(team.get(stat_key)):
+                evidence += 1
+
+    odds = fixture.get("odds") or {}
+    for market_key in ("match_winner", "over_under", "both_teams_score", "corners"):
+        market = odds.get(market_key)
+        if isinstance(market, dict) and any(not is_unavailable_value(value) for value in market.values()):
+            evidence += 1
+
+    technical_metrics = fixture.get("technical_metrics") or {}
+    if isinstance(technical_metrics, dict):
+        for value in technical_metrics.values():
+            if not is_unavailable_value(value):
+                evidence += 1
+
+    return evidence
+
+
+def sanitize_public_analysis_message(message: str) -> str:
+    internal_markers = (
+        "REGRAS INTERNAS",
+        "REGRAS IMPORTANTES",
+        "REGRAS DE SEGURANÇA",
+        "ANTES DE FINALIZAR",
+        "verificação interna obrigatória",
+    )
+    public_section_starts = (
+        "⏰", "⚽", "🏆", "📌", "📊", "🎯", "🧠", "⚠️ Gestão de risco",
+    )
+
+    cleaned_lines: list[str] = []
+    skipping_internal_section = False
+
+    for line in message.splitlines():
+        stripped = line.strip()
+        if any(marker.lower() in stripped.lower() for marker in internal_markers):
+            skipping_internal_section = True
+            continue
+        if skipping_internal_section and stripped.startswith(public_section_starts):
+            skipping_internal_section = False
+        if not skipping_internal_section:
+            cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines).strip()
+
+
+def build_low_data_reminder_message(
+    fixture: dict[str, Any],
+    morning_report_context: str,
+) -> str:
+    home = fixture.get("home") or (fixture.get("home_team") or {}).get("name") or "Time Casa"
+    away = fixture.get("away") or (fixture.get("away_team") or {}).get("name") or "Time Fora"
+    league = fixture.get("league") or "Liga"
+    kickoff = fixture.get("kickoff") or "horário não confirmado"
+
+    if morning_report_context.startswith("Relatorio Matinal nao encontrado"):
+        morning_line = "Não há relatório matinal salvo para comparar este jogo."
+    else:
+        morning_line = (
+            "O relatório matinal ficou como contexto, mas a checagem pré-jogo "
+            "não trouxe dados novos para validar uma entrada."
+        )
+
+    return (
+        "⏰ JOGO EM 30 MINUTOS\n"
+        f"⚽ {home} x {away}\n"
+        f"🏆 {league} | 🕐 {kickoff}\n\n"
+        "📌 STATUS DOS DADOS\n"
+        "Dados pré-jogo insuficientes: só há confirmação de times, liga e horário.\n\n"
+        "📊 LEITURA PRÉ-JOGO\n"
+        f"{morning_line} Sem estatísticas atualizadas, odds confirmadas, escalações ou desfalques, "
+        "a leitura precisa ser tratada como limitada.\n\n"
+        "🎯 RECOMENDAÇÃO\n"
+        "Mercado: SEM ENTRADA\n"
+        "Odd: não confirmada\n"
+        "Stake: 0\n"
+        "Confiança: 4/10\n\n"
+        "🧠 JUSTIFICATIVA\n"
+        "Não há pelo menos 3 evidências objetivas a favor de um mercado. "
+        "A decisão mais prudente é preservar banca em vez de manter uma confiança alta sem validação.\n\n"
+        "⚠️ Gestão de risco: aposta não é certeza. Use banca definida e não aumente stake para recuperar perdas."
+    )
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1194,15 +1296,22 @@ def _send_cron_analysis(settings: Settings, cleaned_payload: list[dict[str, Any]
 
 def send_game_reminder(settings: Settings, fixture: dict[str, Any]) -> None:
     """Envia lembrete 30 minutos antes de um jogo específico."""
-    home = fixture.get("home", "?")
-    away = fixture.get("away", "?")
+    home = fixture.get("home") or (fixture.get("home_team") or {}).get("name") or "?"
+    away = fixture.get("away") or (fixture.get("away_team") or {}).get("name") or "?"
     league = fixture.get("league", "?")
     kickoff = fixture.get("kickoff", "")
     morning_report_context = get_morning_report_context(fixture, settings)
+    evidence_count = count_objective_evidence(fixture)
 
     logging.info("Enviando lembrete: %s x %s", home, away)
 
+    if evidence_count < 3:
+        message = build_low_data_reminder_message(fixture, morning_report_context)
+        send_to_telegram_sync(settings.telegram_token, settings.telegram_chat_id, message)
+        return
+
     client = OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url)
+    fixture_json = json.dumps(fixture, ensure_ascii=False, indent=2)
     try:
         response = client.chat.completions.create(
             model=settings.llm_model,
@@ -1216,9 +1325,9 @@ def send_game_reminder(settings: Settings, fixture: dict[str, Any]) -> None:
                         f"Horário: {kickoff}\n\n"
                         f"RELATORIO MATINAL DO DIA (memoria para consistencia):\n"
                         f"{morning_report_context}\n\n"
-                        f"DADOS DISPONÍVEIS DA API: apenas nome dos times, liga e horário.\n"
-                        f"DADOS NÃO DISPONÍVEIS: desfalques, lesões, escalações, estatísticas detalhadas, xG, posse de bola, finalizações.\n"
-                        f"Para qualquer dado não disponível, escreva 'Informação não disponível no momento.'\n"
+                        f"EVIDENCIAS OBJETIVAS CONFIRMADAS: {evidence_count}\n"
+                        f"DADOS DISPONÍVEIS DA API:\n{fixture_json}\n\n"
+                        f"Para qualquer dado ausente, resuma a lacuna no status dos dados sem listar campos vazios.\n"
                         f"Se a recomendação mudar em relação ao Relatório Matinal, explique o dado novo confirmado que motivou a mudança.\n"
                         f"NÃO invente nenhuma informação. Gere a análise pré-jogo."
                     ),
@@ -1227,7 +1336,7 @@ def send_game_reminder(settings: Settings, fixture: dict[str, Any]) -> None:
             max_tokens=600,
         )
         message = response.choices[0].message.content or ""
-        message = message.strip()
+        message = sanitize_public_analysis_message(message.strip())
     except Exception as exc:
         logging.error("Erro ao gerar lembrete para %s x %s: %s", home, away, exc)
         message = (
