@@ -83,6 +83,10 @@ class FootballApiClient:
         response = self.get("/odds", {"fixture": fixture_id})
         return response if isinstance(response, list) else []
 
+    def get_fixture_lineups(self, fixture_id: int) -> list[dict[str, Any]]:
+        response = self.get("/fixtures/lineups", {"fixture": fixture_id})
+        return response if isinstance(response, list) else []
+
 
 def parse_average(value: Any) -> float | None:
     if value in (None, ""):
@@ -149,6 +153,40 @@ def extract_market_odds(bookmaker: dict[str, Any] | None) -> dict[str, Any]:
             }
 
     return extracted
+
+
+def normalize_lineup_player(item: dict[str, Any]) -> dict[str, Any]:
+    player = item.get("player", {})
+    return {
+        "name": player.get("name"),
+        "number": player.get("number"),
+        "position": player.get("pos"),
+    }
+
+
+def normalize_fixture_lineups(lineups_payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    lineups: list[dict[str, Any]] = []
+
+    for lineup in lineups_payload:
+        team = lineup.get("team", {})
+        coach = lineup.get("coach", {})
+        lineups.append(
+            {
+                "team": team.get("name"),
+                "formation": lineup.get("formation"),
+                "coach": coach.get("name"),
+                "start_xi": [
+                    normalize_lineup_player(item)
+                    for item in lineup.get("startXI", [])
+                ],
+                "substitutes": [
+                    normalize_lineup_player(item)
+                    for item in lineup.get("substitutes", [])
+                ],
+            }
+        )
+
+    return lineups
 
 
 def normalize_team_stats(team_name: str, stats: dict[str, Any], side: str) -> dict[str, Any]:

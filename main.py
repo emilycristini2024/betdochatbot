@@ -10,7 +10,7 @@ from betchat.football_api import FootballApiClient, FootballApiRateLimitError, b
 from betchat.sportsdb import SportsDbClient
 from betchat.llm import ask_llm_for_predictions
 from betchat.telegram_bot import run_chat_bot, send_to_telegram_sync
-from betchat.reminders import send_morning_report, schedule_game_reminders
+from betchat.reminders import get_scheduled_fixtures, send_morning_report, schedule_game_reminders
 
 
 def build_no_games_message(target_date: str) -> str:
@@ -134,8 +134,7 @@ def run_scheduled_bot(settings) -> None:
         logging.info("Bot iniciado após 07h BRT — re-agendando lembretes do dia...")
         try:
             today = now_brt.strftime("%Y-%m-%d")
-            sportsdb = SportsDbClient()
-            fixtures = sportsdb.get_fixtures_for_date(today)
+            fixtures = get_scheduled_fixtures(settings, today)
             if fixtures:
                 count = schedule_game_reminders(settings, fixtures[:settings.max_fixtures], apscheduler)
                 logging.info("Re-agendados %d lembretes para hoje (%s).", count, today)
@@ -160,6 +159,8 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     settings = load_settings()
 

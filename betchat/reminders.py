@@ -6,7 +6,11 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, TYPE_CHECKING
 
 from .settings import Settings, get_current_datetime
-from .football_api import FootballApiClient, unavailable_technical_metrics, LEAGUE_NAMES
+from .football_api import (
+    FootballApiClient,
+    build_analysis_payload,
+    normalize_fixture_lineups,
+)
 from .sportsdb import SportsDbClient
 from .llm import ask_llm_for_morning_report, ask_llm_for_reminder, sanitize_public_analysis_message
 from .telegram_bot import send_to_telegram, send_to_telegram_sync
@@ -16,6 +20,64 @@ if TYPE_CHECKING:
 
 # Memória em processo para relatórios matinais
 MORNING_REPORT_MEMORY: dict[str, str] = {}
+PRE_MATCH_REMINDER_MINUTES = 50
+
+
+def get_scheduled_fixtures(settings: Settings, target_date: str) -> list[dict[str, Any]]:
+    if settings.rapidapi_key:
+        api_client = FootballApiClient(
+            api_key=settings.rapidapi_key,
+            host=settings.rapidapi_host,
+            request_delay_seconds=settings.request_delay_seconds,
+        )
+        try:
+            fixtures = build_analysis_payload(
+                api_client=api_client,
+                league_ids=settings.league_ids,
+                target_date=target_date,
+                timezone=settings.timezone,
+                bookmaker_name=settings.bookmaker_name,
+                max_fixtures=settings.max_fixtures,
+                request_delay_seconds=settings.request_delay_seconds,
+            )
+            if fixtures:
+                logging.info("API-Football: %d jogos enriquecidos para %s", len(fixtures), target_date)
+                return fixtures
+            logging.info("API-Football sem jogos para %s. Usando TheSportsDB...", target_date)
+        except Exception as exc:
+            logging.warning("API-Football falhou ao enriquecer jogos: %s. Usando TheSportsDB...", exc)
+
+    sportsdb = SportsDbClient()
+    fixtures = sportsdb.get_fixtures_for_date(target_date)
+    logging.info("TheSportsDB: %d jogos para %s", len(fixtures), target_date)
+    return fixtures
+
+
+def enrich_fixture_with_lineups(settings: Settings, fixture: dict[str, Any]) -> dict[str, Any]:
+    fixture_id = fixture.get("fixture_id")
+    if not settings.rapidapi_key or not fixture_id:
+        return fixture
+
+    api_client = FootballApiClient(
+        api_key=settings.rapidapi_key,
+        host=settings.rapidapi_host,
+        request_delay_seconds=settings.request_delay_seconds,
+    )
+
+    try:
+        lineups_payload = api_client.get_fixture_lineups(int(fixture_id))
+    except Exception as exc:
+        logging.warning("Nao foi possivel buscar escalacoes do jogo %s: %s", fixture_id, exc)
+        return fixture
+
+    if not lineups_payload:
+        logging.info("Escalacoes oficiais ainda indisponiveis para fixture %s", fixture_id)
+        return fixture
+
+    enriched = {**fixture}
+    enriched["official_lineups"] = normalize_fixture_lineups(lineups_payload)
+    logging.info("Escalacoes oficiais adicionadas ao fixture %s", fixture_id)
+    return enriched
 
 
 def remember_morning_report(target_date: str, report: str) -> None:
@@ -69,6 +131,10 @@ def count_objective_evidence(fixture: dict[str, Any]) -> int:
             if not is_unavailable_value(value):
                 evidence += 1
 
+    official_lineups = fixture.get("official_lineups")
+    if isinstance(official_lineups, list) and len(official_lineups) >= 2:
+        evidence += 3
+
     return evidence
 
 
@@ -91,7 +157,7 @@ def build_low_data_reminder_message(
     )
 
     return (
-        "⏰ JOGO EM 30 MINUTOS\n"
+        f"⏰ JOGO EM {PRE_MATCH_REMINDER_MINUTES} MINUTOS\n"
         f"⚽ {home} x {away}\n"
         f"🏆 {league} | 🕐 {kickoff}\n\n"
         "📌 STATUS DOS DADOS\n"
@@ -112,6 +178,7 @@ def build_low_data_reminder_message(
 
 
 def send_game_reminder(settings: Settings, fixture: dict[str, Any]) -> None:
+    fixture = enrich_fixture_with_lineups(settings, fixture)
     home = fixture.get("home") or (fixture.get("home_team") or {}).get("name") or "?"
     away = fixture.get("away") or (fixture.get("away_team") or {}).get("name") or "?"
     league = fixture.get("league", "?")
@@ -137,7 +204,7 @@ def send_game_reminder(settings: Settings, fixture: dict[str, Any]) -> None:
         )
     except Exception as exc:
         logging.error("Erro ao gerar lembrete para %s x %s: %s", home, away, exc)
-        message = f"⏰ Em 30 minutos!\n⚽ {home} x {away} — {league}\n🕐 {kickoff}"
+        message = f"⏰ Em {PRE_MATCH_REMINDER_MINUTES} minutos!\n⚽ {home} x {away} — {league}\n🕐 {kickoff}"
 
     try:
         loop = asyncio.new_event_loop()
@@ -189,9 +256,9 @@ def schedule_game_reminders(
             logging.warning("Não foi possível parsear horário '%s' — lembrete ignorado", kickoff_str)
             continue
 
-        reminder_time = kickoff_utc - timedelta(minutes=30)
-        home = fixture.get("home", "?")
-        away = fixture.get("away", "?")
+        reminder_time = kickoff_utc - timedelta(minutes=PRE_MATCH_REMINDER_MINUTES)
+        home = fixture.get("home") or (fixture.get("home_team") or {}).get("name") or "?"
+        away = fixture.get("away") or (fixture.get("away_team") or {}).get("name") or "?"
 
         if reminder_time <= now_utc + timedelta(minutes=2):
             logging.info(
@@ -225,40 +292,7 @@ def send_morning_report(
     today = get_current_datetime(settings.timezone).strftime("%Y-%m-%d")
     logging.info("Gerando relatório matinal para %s", today)
 
-    fixtures: list[dict[str, Any]] = []
-
-    if settings.rapidapi_key:
-        api_client = FootballApiClient(
-            api_key=settings.rapidapi_key,
-            host=settings.rapidapi_host,
-            request_delay_seconds=settings.request_delay_seconds,
-        )
-        try:
-            raw = api_client.get_daily_fixtures(
-                league_ids=settings.league_ids,
-                target_date=today,
-                timezone=settings.timezone,
-            )
-            fixtures = [
-                {
-                    "kickoff": f.get("fixture", {}).get("date"),
-                    "league": f.get("league", {}).get("name") or LEAGUE_NAMES.get(
-                        f.get("league", {}).get("id"), "Liga"
-                    ),
-                    "home": f.get("teams", {}).get("home", {}).get("name"),
-                    "away": f.get("teams", {}).get("away", {}).get("name"),
-                    "technical_metrics": unavailable_technical_metrics(),
-                }
-                for f in raw[:settings.max_fixtures]
-            ]
-            logging.info("API-Football: %d jogos para %s", len(fixtures), today)
-        except Exception as exc:
-            logging.warning("API-Football falhou: %s. Usando TheSportsDB...", exc)
-
-    if not fixtures:
-        sportsdb = SportsDbClient()
-        fixtures = sportsdb.get_fixtures_for_date(today)
-        logging.info("TheSportsDB: %d jogos para %s", len(fixtures), today)
+    fixtures = get_scheduled_fixtures(settings, today)
 
     if not fixtures:
         message = f"📋 Relatório matinal {today}\n\nNenhuma partida encontrada nas ligas configuradas."
