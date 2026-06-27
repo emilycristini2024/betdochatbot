@@ -64,13 +64,17 @@ class FootballApiClient:
         target_date: str,
         timezone: str,
     ) -> list[dict[str, Any]]:
-        response = self.get("/fixtures", {"date": target_date, "timezone": timezone})
+        response = self.get_fixtures_for_date(target_date, timezone)
         allowed_leagues = set(league_ids)
         return [
             fixture
             for fixture in response
             if fixture.get("league", {}).get("id") in allowed_leagues
         ]
+
+    def get_fixtures_for_date(self, target_date: str, timezone: str) -> list[dict[str, Any]]:
+        response = self.get("/fixtures", {"date": target_date, "timezone": timezone})
+        return response if isinstance(response, list) else []
 
     def get_team_statistics(self, team_id: int, league_id: int, season: int) -> dict[str, Any]:
         response = self.get(

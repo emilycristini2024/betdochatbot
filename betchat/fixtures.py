@@ -147,6 +147,20 @@ def extract_date_from_message(text: str, current_date: str, timezone_name: str) 
     return current_date
 
 
+def normalize_api_football_fixture(fixture: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "kickoff": fixture.get("fixture", {}).get("date"),
+        "league": fixture.get("league", {}).get("name")
+        or LEAGUE_NAMES.get(fixture.get("league", {}).get("id"), "Liga"),
+        "country": fixture.get("league", {}).get("country"),
+        "home": fixture.get("teams", {}).get("home", {}).get("name"),
+        "away": fixture.get("teams", {}).get("away", {}).get("name"),
+        "status": fixture.get("fixture", {}).get("status", {}).get("short"),
+        "technical_metrics": unavailable_technical_metrics(),
+        "source": "football_api",
+    }
+
+
 def get_fixtures_for_chat(
     settings: Settings,
     target_date: str,
@@ -165,15 +179,7 @@ def get_fixtures_for_chat(
             )
             if fixtures:
                 result = [
-                    {
-                        "kickoff": fixture.get("fixture", {}).get("date"),
-                        "league": fixture.get("league", {}).get("name")
-                        or LEAGUE_NAMES.get(fixture.get("league", {}).get("id"), "Liga"),
-                        "home": fixture.get("teams", {}).get("home", {}).get("name"),
-                        "away": fixture.get("teams", {}).get("away", {}).get("name"),
-                        "technical_metrics": unavailable_technical_metrics(),
-                        "source": "football_api",
-                    }
+                    normalize_api_football_fixture(fixture)
                     for fixture in fixtures[:15]
                 ]
                 result = filter_fixtures_by_local_date(result, target_date, settings.timezone)
@@ -218,12 +224,55 @@ def get_fixtures_for_chat(
     return fixtures, "thesportsdb"
 
 
+def get_next_api_football_fixtures(
+    settings: Settings,
+    now: datetime,
+    max_days_ahead: int,
+) -> list[dict[str, Any]]:
+    if not settings.rapidapi_key:
+        return []
+
+    api_client = FootballApiClient(
+        api_key=settings.rapidapi_key,
+        host=settings.rapidapi_host,
+        request_delay_seconds=0.5,
+    )
+    collected: list[dict[str, Any]] = []
+
+    for days_ahead in range(max_days_ahead + 1):
+        target_date = (now + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+        try:
+            raw_fixtures = api_client.get_fixtures_for_date(target_date, settings.timezone)
+        except Exception as exc:
+            logging.warning("API-Football ampla falhou para %s: %s", target_date, exc)
+            continue
+
+        normalized = [normalize_api_football_fixture(fixture) for fixture in raw_fixtures]
+        future_fixtures = filter_future_fixtures(normalized, settings.timezone, now)
+        collected.extend(future_fixtures)
+        if collected:
+            break
+
+    return sorted(
+        collected,
+        key=lambda fixture: parse_fixture_kickoff(fixture.get("kickoff"), settings.timezone) or now,
+    )
+
+
 def get_next_fixtures_for_chat(
     settings: Settings,
     max_days_ahead: int = 7,
 ) -> tuple[list[dict[str, Any]], str, str]:
     now = get_current_datetime(settings.timezone)
     current_date = now.strftime("%Y-%m-%d")
+
+    api_football_fixtures = get_next_api_football_fixtures(settings, now, max_days_ahead)
+    if api_football_fixtures:
+        target_date = (
+            parse_fixture_kickoff(api_football_fixtures[0].get("kickoff"), settings.timezone)
+            or now
+        ).strftime("%Y-%m-%d")
+        return api_football_fixtures[:5], "football_api", target_date
 
     if not settings.rapidapi_key and not settings.football_data_api_key:
         sportsdb = SportsDbClient()
@@ -248,6 +297,16 @@ def get_next_fixtures_for_chat(
                 target_date,
             )
             return future_fixtures[:5], source, target_date
+
+    sportsdb = SportsDbClient()
+    fixtures = sportsdb.get_next_fixtures()
+    future_fixtures = filter_future_fixtures(fixtures, settings.timezone, now)
+    if future_fixtures:
+        target_date = (
+            parse_fixture_kickoff(future_fixtures[0].get("kickoff"), settings.timezone)
+            or now
+        ).strftime("%Y-%m-%d")
+        return future_fixtures[:5], "thesportsdb", target_date
 
     logging.info(
         "Nenhum jogo futuro encontrado entre %s e os proximos %d dias",
