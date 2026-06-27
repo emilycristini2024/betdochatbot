@@ -24,7 +24,7 @@ class SportsDbClient:
     def __init__(
         self,
         request_delay_seconds: float = 0.4,
-        max_retries: int = 1,
+        max_retries: int = 0,
     ) -> None:
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "BetChat/1.0"})
@@ -69,7 +69,11 @@ class SportsDbClient:
         logging.info("TheSportsDB proximos jogos combinado: %d jogos", len(result))
         return result
 
-    def get_fixtures_for_date(self, target_date: str) -> list[dict[str, Any]]:
+    def get_fixtures_for_date(
+        self,
+        target_date: str,
+        max_league_checks: int = 8,
+    ) -> list[dict[str, Any]]:
         """
         Estratégia combinada:
         1. Tenta eventsday diretamente
@@ -92,8 +96,16 @@ class SportsDbClient:
                     if normalized.get("event_id"):
                         seen_ids.add(str(normalized["event_id"]))
 
+        if result:
+            logging.info(
+                "TheSportsDB usando eventsday sem complemento: %d jogos para %s",
+                len(result),
+                target_date,
+            )
+            return result
+
         logging.info("Complementando com eventsnextleague para %s...", target_date)
-        for league_id in SPORTSDB_LEAGUE_IDS:
+        for league_id in SPORTSDB_LEAGUE_IDS[:max_league_checks]:
             if self._rate_limited:
                 break
             league_events = self.get_next_fixtures_by_league(league_id)

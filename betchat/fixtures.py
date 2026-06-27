@@ -284,7 +284,10 @@ def get_next_api_football_fixtures(
                 or now,
             )
     except Exception as exc:
-        logging.warning("API-Football next falhou: %s", exc)
+        if "Next parameter" in str(exc):
+            logging.info("API-Football next indisponivel no plano atual; usando busca por data")
+        else:
+            logging.warning("API-Football next falhou: %s", exc)
 
     for days_ahead in range(max_days_ahead + 1):
         target_date = (now + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
@@ -296,6 +299,39 @@ def get_next_api_football_fixtures(
 
         normalized = [normalize_api_football_fixture(fixture) for fixture in raw_fixtures]
         future_fixtures = filter_future_fixtures(normalized, settings.timezone, now)
+        collected.extend(future_fixtures)
+        if collected:
+            break
+
+    return sorted(
+        collected,
+        key=lambda fixture: parse_fixture_kickoff(fixture.get("kickoff"), settings.timezone) or now,
+    )
+
+
+def get_next_football_data_fixtures(
+    settings: Settings,
+    now: datetime,
+    max_days_ahead: int,
+) -> list[dict[str, Any]]:
+    if not settings.football_data_api_key:
+        return []
+
+    football_data = FootballDataClient(
+        api_key=settings.football_data_api_key,
+        timezone_name=settings.timezone,
+    )
+    collected: list[dict[str, Any]] = []
+
+    for days_ahead in range(max_days_ahead + 1):
+        target_date = (now + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+        try:
+            fixtures = football_data.get_matches_for_date(target_date)
+        except Exception as exc:
+            logging.warning("football-data.org ampla falhou para %s: %s", target_date, exc)
+            continue
+
+        future_fixtures = filter_future_fixtures(fixtures, settings.timezone, now)
         collected.extend(future_fixtures)
         if collected:
             break
@@ -339,27 +375,13 @@ def get_next_fixtures_for_chat(
         ).strftime("%Y-%m-%d")
         return api_football_fixtures[:5], "football_api", target_date
 
-    if not settings.rapidapi_key and not settings.football_data_api_key:
-        sportsdb_fixtures = get_next_sportsdb_fixtures(settings, now)
-        if sportsdb_fixtures:
-            target_date = (
-                parse_fixture_kickoff(sportsdb_fixtures[0].get("kickoff"), settings.timezone)
-                or now
-            ).strftime("%Y-%m-%d")
-            return sportsdb_fixtures[:5], "thesportsdb", target_date
-        return [], "thesportsdb", current_date
-
-    for days_ahead in range(max_days_ahead + 1):
-        target_date = (now + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
-        fixtures, source = get_fixtures_for_chat(settings, target_date)
-        future_fixtures = filter_future_fixtures(fixtures, settings.timezone, now)
-        if future_fixtures:
-            logging.info(
-                "Proximos jogos encontrados via %s para %s",
-                source,
-                target_date,
-            )
-            return future_fixtures[:5], source, target_date
+    football_data_fixtures = get_next_football_data_fixtures(settings, now, max_days_ahead)
+    if football_data_fixtures:
+        target_date = (
+            parse_fixture_kickoff(football_data_fixtures[0].get("kickoff"), settings.timezone)
+            or now
+        ).strftime("%Y-%m-%d")
+        return football_data_fixtures[:5], "football_data", target_date
 
     sportsdb_fixtures = get_next_sportsdb_fixtures(settings, now)
     if sportsdb_fixtures:
@@ -389,8 +411,10 @@ def get_sources_diagnostics(settings: Settings, max_results: int = 5) -> list[st
                 host=settings.rapidapi_host,
                 request_delay_seconds=0.5,
             )
-            fixtures = api_client.get_next_fixtures(settings.timezone, limit=max_results)
-            lines.append(f"- API-Football teste: {len(fixtures)} proximos jogos")
+            fixtures = api_client.get_fixtures_for_date(today, settings.timezone)
+            lines.append(
+                f"- API-Football teste: {len(fixtures)} jogos para {today} (consulta por data)"
+            )
         except Exception as exc:
             lines.append(f"- API-Football teste: erro ({describe_source_exception(exc)})")
     else:
