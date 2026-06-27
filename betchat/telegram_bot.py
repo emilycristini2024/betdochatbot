@@ -1,10 +1,10 @@
 import asyncio
 import logging
+from typing import Any
 
-from telegram import Bot, Update
+from telegram import Bot, Message, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from .settings import Settings, get_current_datetime
 from .fixtures import (
     extract_date_from_message,
     get_fixtures_for_chat,
@@ -13,6 +13,7 @@ from .fixtures import (
     message_wants_next_fixture,
 )
 from .llm import ask_llm_for_chat_reply
+from .settings import Settings, get_current_datetime
 
 
 def split_message(text: str, max_length: int = 4000) -> list[str]:
@@ -53,7 +54,6 @@ async def send_to_telegram(token: str, chat_id: str, message: str) -> None:
 
 
 def send_to_telegram_sync(token: str, chat_id: str, message: str) -> None:
-    """Versão síncrona segura — cria novo event loop para evitar conflito com o loop do bot."""
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -62,28 +62,33 @@ def send_to_telegram_sync(token: str, chat_id: str, message: str) -> None:
         loop.close()
 
 
+async def reply_with_chunks(message: Message, text: str) -> None:
+    for chunk in split_message(text):
+        await message.reply_text(chunk)
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message:
+    message = update.effective_message
+    if not message:
         return
-    await update.message.reply_text(
+    await message.reply_text(
         "BetChat online. Analiso jogos com foco em gols, ambas marcam e escanteios. "
-        "Pergunte sobre jogos de hoje, amanhã ou qualquer partida específica."
+        "No canal, use /proximo ou /jogos."
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message:
+    message = update.effective_message
+    if not message:
         return
-    await update.message.reply_text(
+    await message.reply_text(
         "Comandos:\n"
         "/start - inicia o bot\n"
-        "/help - mostra esta ajuda\n\n"
-        "Exemplos de perguntas:\n"
-        "- Jogos de hoje\n"
-        "- Jogos de amanhã\n"
-        "- Apostas de hoje\n"
-        "- Vasco x Flamengo, analisa\n"
-        "- Real Madrid x Barcelona escanteios\n\n"
+        "/help - mostra esta ajuda\n"
+        "/proximo - busca proximos jogos futuros\n"
+        "/jogos - lista jogos de hoje\n\n"
+        "No privado ou grupo, tambem pode escrever: jogos de hoje, jogos de amanha, "
+        "proximo jogo, apostas de hoje ou uma partida especifica.\n\n"
         "Em grupo, me mencione com @Betchatdo_bot ou responda uma mensagem minha."
     )
 
@@ -105,6 +110,92 @@ def should_answer_message(update: Update, bot_username: str | None) -> bool:
     return False
 
 
+async def build_fixtures_reply(
+    settings: Settings,
+    user_text: str,
+    wants_next_fixture: bool,
+) -> str:
+    fixtures_context: list[dict[str, Any]] | None
+    fixtures_source = "football_api"
+    target_date: str | None
+
+    if wants_next_fixture:
+        logging.info("Buscando proximos jogos")
+        fixtures_context, fixtures_source, target_date = await asyncio.to_thread(
+            get_next_fixtures_for_chat,
+            settings,
+        )
+    else:
+        target_date = extract_date_from_message(
+            user_text,
+            get_current_datetime(settings.timezone).strftime("%Y-%m-%d"),
+            settings.timezone,
+        )
+        logging.info("Buscando jogos para o chat: %s", target_date)
+        fixtures_context, fixtures_source = await asyncio.to_thread(
+            get_fixtures_for_chat,
+            settings,
+            target_date,
+        )
+
+    if not fixtures_context:
+        if wants_next_fixture:
+            return "Nao encontrei proximos jogos futuros nas fontes conectadas."
+        return f"Nao encontrei partidas para {target_date} nas fontes conectadas."
+
+    logging.info(
+        "Encontrados %d jogos via %s para %s",
+        len(fixtures_context),
+        fixtures_source,
+        target_date,
+    )
+
+    return await asyncio.to_thread(
+        ask_llm_for_chat_reply,
+        settings.llm_api_key,
+        settings.llm_base_url,
+        settings.llm_model,
+        user_text,
+        fixtures_context,
+        fixtures_source,
+        target_date,
+    )
+
+
+async def next_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if not message:
+        return
+
+    settings: Settings = context.application.bot_data["settings"]
+    await message.chat.send_action("typing")
+
+    try:
+        reply = await build_fixtures_reply(settings, "proximo jogo", True)
+    except Exception as exc:
+        logging.error("Erro ao processar /proximo: %s", exc)
+        reply = "Ocorreu um erro ao buscar os proximos jogos. Tente novamente em instantes."
+
+    await reply_with_chunks(message, reply)
+
+
+async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if not message:
+        return
+
+    settings: Settings = context.application.bot_data["settings"]
+    await message.chat.send_action("typing")
+
+    try:
+        reply = await build_fixtures_reply(settings, "jogos de hoje", False)
+    except Exception as exc:
+        logging.error("Erro ao processar /jogos: %s", exc)
+        reply = "Ocorreu um erro ao buscar os jogos de hoje. Tente novamente em instantes."
+
+    await reply_with_chunks(message, reply)
+
+
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
     bot_username: str | None = context.application.bot_data.get("bot_username")
@@ -118,61 +209,24 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.chat.send_action("typing")
 
     user_text = update.message.text
-    fixtures_context = None
-    fixtures_source = "football_api"
-    target_date = None
     wants_next_fixture = message_wants_next_fixture(user_text)
 
-    if message_wants_fixtures(user_text):
-        if wants_next_fixture:
-            logging.info("Buscando proximos jogos para o chat")
-            fixtures_context, fixtures_source, target_date = await asyncio.to_thread(
-                get_next_fixtures_for_chat, settings
-            )
-        else:
-            target_date = extract_date_from_message(
-                user_text,
-                get_current_datetime(settings.timezone).strftime("%Y-%m-%d"),
-                settings.timezone,
-            )
-            logging.info("Buscando jogos para o chat: %s", target_date)
-            fixtures_context, fixtures_source = await asyncio.to_thread(
-                get_fixtures_for_chat, settings, target_date
-            )
-        if fixtures_context:
-            logging.info(
-                "Encontrados %d jogos via %s para %s",
-                len(fixtures_context), fixtures_source, target_date,
-            )
-        else:
-            not_found_message = (
-                "Nao encontrei proximos jogos futuros nas fontes conectadas."
-                if wants_next_fixture
-                else f"Nao encontrei partidas para {target_date} nas fontes conectadas."
-            )
-            await update.message.reply_text(not_found_message)
-            return
-
     try:
-        reply = await asyncio.to_thread(
-            ask_llm_for_chat_reply,
-            settings.llm_api_key,
-            settings.llm_base_url,
-            settings.llm_model,
-            user_text,
-            fixtures_context,
-            fixtures_source,
-            target_date,
-        )
+        if message_wants_fixtures(user_text):
+            reply = await build_fixtures_reply(settings, user_text, wants_next_fixture)
+        else:
+            reply = await asyncio.to_thread(
+                ask_llm_for_chat_reply,
+                settings.llm_api_key,
+                settings.llm_base_url,
+                settings.llm_model,
+                user_text,
+            )
     except Exception as exc:
         logging.error("Erro ao chamar a LLM: %s", exc)
-        await update.message.reply_text(
-            "Ocorreu um erro ao processar sua mensagem. Tente novamente em instantes."
-        )
-        return
+        reply = "Ocorreu um erro ao processar sua mensagem. Tente novamente em instantes."
 
-    for chunk in split_message(reply):
-        await update.message.reply_text(chunk)
+    await reply_with_chunks(update.message, reply)
 
 
 async def post_init(application: Application) -> None:
@@ -195,6 +249,8 @@ def run_chat_bot(settings: Settings) -> None:
     application.bot_data["settings"] = settings
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler(["proximo", "proximos"], next_command))
+    application.add_handler(CommandHandler("jogos", today_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
     logging.info("Iniciando modo chat por polling")
     application.run_polling(
