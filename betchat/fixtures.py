@@ -259,6 +259,24 @@ def get_next_api_football_fixtures(
     )
 
 
+def get_next_sportsdb_fixtures(
+    settings: Settings,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    sportsdb = SportsDbClient()
+    fixtures = sportsdb.get_next_fixtures(limit=15)
+    future_fixtures = filter_future_fixtures(fixtures, settings.timezone, now)
+    if future_fixtures:
+        return future_fixtures
+    if fixtures:
+        logging.warning(
+            "TheSportsDB retornou %d proximos jogos, mas nenhum horario passou no filtro futuro. "
+            "Usando lista bruta.",
+            len(fixtures),
+        )
+    return fixtures
+
+
 def get_next_fixtures_for_chat(
     settings: Settings,
     max_days_ahead: int = 7,
@@ -275,15 +293,13 @@ def get_next_fixtures_for_chat(
         return api_football_fixtures[:5], "football_api", target_date
 
     if not settings.rapidapi_key and not settings.football_data_api_key:
-        sportsdb = SportsDbClient()
-        fixtures = sportsdb.get_next_fixtures()
-        future_fixtures = filter_future_fixtures(fixtures, settings.timezone, now)
-        if future_fixtures:
+        sportsdb_fixtures = get_next_sportsdb_fixtures(settings, now)
+        if sportsdb_fixtures:
             target_date = (
-                parse_fixture_kickoff(future_fixtures[0].get("kickoff"), settings.timezone)
+                parse_fixture_kickoff(sportsdb_fixtures[0].get("kickoff"), settings.timezone)
                 or now
             ).strftime("%Y-%m-%d")
-            return future_fixtures[:5], "thesportsdb", target_date
+            return sportsdb_fixtures[:5], "thesportsdb", target_date
         return [], "thesportsdb", current_date
 
     for days_ahead in range(max_days_ahead + 1):
@@ -298,15 +314,13 @@ def get_next_fixtures_for_chat(
             )
             return future_fixtures[:5], source, target_date
 
-    sportsdb = SportsDbClient()
-    fixtures = sportsdb.get_next_fixtures()
-    future_fixtures = filter_future_fixtures(fixtures, settings.timezone, now)
-    if future_fixtures:
+    sportsdb_fixtures = get_next_sportsdb_fixtures(settings, now)
+    if sportsdb_fixtures:
         target_date = (
-            parse_fixture_kickoff(future_fixtures[0].get("kickoff"), settings.timezone)
+            parse_fixture_kickoff(sportsdb_fixtures[0].get("kickoff"), settings.timezone)
             or now
         ).strftime("%Y-%m-%d")
-        return future_fixtures[:5], "thesportsdb", target_date
+        return sportsdb_fixtures[:5], "thesportsdb", target_date
 
     logging.info(
         "Nenhum jogo futuro encontrado entre %s e os proximos %d dias",

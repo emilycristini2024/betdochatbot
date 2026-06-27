@@ -78,6 +78,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
+def build_sources_status(settings: Settings) -> str:
+    return (
+        "Fontes conectadas:\n"
+        f"- API-Football: {'configurada' if settings.rapidapi_key else 'nao configurada'}\n"
+        f"- football-data.org: {'configurada' if settings.football_data_api_key else 'nao configurada'}\n"
+        "- TheSportsDB: fallback gratuito ativo"
+    )
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
     if not message:
@@ -87,7 +96,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/start - inicia o bot\n"
         "/help - mostra esta ajuda\n"
         "/proximo - busca proximos jogos futuros\n"
-        "/jogos - lista jogos de hoje\n\n"
+        "/jogos - lista jogos de hoje\n"
+        "/status - mostra fontes conectadas\n\n"
         "No privado ou grupo, tambem pode escrever: jogos de hoje, jogos de amanha, "
         "proximo jogo, apostas de hoje ou uma partida especifica.\n\n"
         "Em grupo, me mencione com @Betchatdo_bot ou responda uma mensagem minha."
@@ -147,8 +157,9 @@ async def build_fixtures_reply(
         )
 
     if not fixtures_context:
+        sources_status = build_sources_status(settings)
         if wants_next_fixture:
-            return "Nao encontrei proximos jogos futuros nas fontes conectadas."
+            return f"Nao encontrei proximos jogos futuros nas fontes conectadas.\n\n{sources_status}"
         fallback_note = (
             f"Nao encontrei partidas para {target_date} nas fontes conectadas. "
             "Busquei os proximos jogos futuros:"
@@ -161,7 +172,7 @@ async def build_fixtures_reply(
         if not fixtures_context:
             return (
                 f"Nao encontrei partidas para {target_date} nem proximos jogos futuros "
-                "nas fontes conectadas."
+                f"nas fontes conectadas.\n\n{sources_status}"
             )
 
     logging.info(
@@ -218,20 +229,31 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await reply_with_chunks(message, reply)
 
 
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if not message:
+        return
+
+    settings: Settings = context.application.bot_data["settings"]
+    await reply_with_chunks(message, build_sources_status(settings))
+
+
 async def channel_post_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.channel_post
     if not message or not message.text:
         return
 
     command = message.text.strip().split(maxsplit=1)[0].split("@", 1)[0].lower()
-    if command not in {"/jogos", "/proximo", "/proximos"}:
+    if command not in {"/jogos", "/proximo", "/proximos", "/status"}:
         return
 
     settings: Settings = context.application.bot_data["settings"]
     await message.chat.send_action("typing")
 
     try:
-        if command == "/jogos":
+        if command == "/status":
+            reply = build_sources_status(settings)
+        elif command == "/jogos":
             reply = await build_fixtures_reply(settings, "jogos de hoje", False)
         else:
             reply = await build_fixtures_reply(settings, "proximo jogo", True)
@@ -297,6 +319,7 @@ def run_chat_bot(settings: Settings) -> None:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler(["proximo", "proximos"], next_command))
     application.add_handler(CommandHandler("jogos", today_command))
+    application.add_handler(CommandHandler("status", status_command))
     application.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POST & filters.TEXT, channel_post_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
     logging.info("Iniciando modo chat por polling")
