@@ -118,6 +118,7 @@ async def build_fixtures_reply(
     fixtures_context: list[dict[str, Any]] | None
     fixtures_source = "football_api"
     target_date: str | None
+    fallback_note = ""
 
     if wants_next_fixture:
         logging.info("Buscando proximos jogos")
@@ -141,7 +142,20 @@ async def build_fixtures_reply(
     if not fixtures_context:
         if wants_next_fixture:
             return "Nao encontrei proximos jogos futuros nas fontes conectadas."
-        return f"Nao encontrei partidas para {target_date} nas fontes conectadas."
+        fallback_note = (
+            f"Nao encontrei partidas para {target_date} nas fontes conectadas. "
+            "Busquei os proximos jogos futuros:"
+        )
+        fixtures_context, fixtures_source, target_date = await asyncio.to_thread(
+            get_next_fixtures_for_chat,
+            settings,
+        )
+        user_text = "proximos jogos futuros"
+        if not fixtures_context:
+            return (
+                f"Nao encontrei partidas para {target_date} nem proximos jogos futuros "
+                "nas fontes conectadas."
+            )
 
     logging.info(
         "Encontrados %d jogos via %s para %s",
@@ -150,7 +164,7 @@ async def build_fixtures_reply(
         target_date,
     )
 
-    return await asyncio.to_thread(
+    reply = await asyncio.to_thread(
         ask_llm_for_chat_reply,
         settings.llm_api_key,
         settings.llm_base_url,
@@ -160,6 +174,7 @@ async def build_fixtures_reply(
         fixtures_source,
         target_date,
     )
+    return f"{fallback_note}\n\n{reply}".strip()
 
 
 async def next_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
