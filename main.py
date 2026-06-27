@@ -7,6 +7,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from betchat.settings import load_settings, get_current_datetime
 from betchat.football_api import FootballApiClient, FootballApiRateLimitError, build_analysis_payload
+from betchat.football_data import FootballDataClient
 from betchat.sportsdb import SportsDbClient
 from betchat.llm import ask_llm_for_predictions
 from betchat.telegram_bot import run_chat_bot, send_to_telegram_sync
@@ -69,7 +70,7 @@ def run_cron_bot(settings) -> None:
             if cleaned_payload:
                 _send_cron_analysis(settings, cleaned_payload)
                 return
-            logging.info("API-Football sem jogos, tentando TheSportsDB...")
+            logging.info("API-Football sem jogos, tentando football-data.org...")
         except FootballApiRateLimitError as exc:
             logging.warning("%s", exc)
             send_to_telegram_sync(
@@ -79,7 +80,34 @@ def run_cron_bot(settings) -> None:
             )
             return
         except Exception as exc:
-            logging.warning("API-Football falhou: %s. Tentando TheSportsDB...", exc)
+            logging.warning("API-Football falhou: %s. Tentando football-data.org...", exc)
+
+    if settings.football_data_api_key:
+        try:
+            logging.info("Buscando partidas de %s via football-data.org", settings.target_date)
+            football_data = FootballDataClient(
+                api_key=settings.football_data_api_key,
+                timezone_name=settings.timezone,
+            )
+            fixtures = football_data.get_matches_for_date(settings.target_date)
+            if fixtures:
+                logging.info(
+                    "football-data.org retornou %d jogos. Enviando para LLM...",
+                    len(fixtures),
+                )
+                message = ask_llm_for_predictions(
+                    provider=settings.llm_provider,
+                    api_key=settings.llm_api_key,
+                    base_url=settings.llm_base_url,
+                    model=settings.llm_model,
+                    cleaned_payload=fixtures[:settings.max_fixtures],
+                )
+                send_to_telegram_sync(settings.telegram_token, settings.telegram_chat_id, message)
+                logging.info("Fluxo finalizado com sucesso")
+                return
+            logging.info("football-data.org sem jogos, tentando TheSportsDB...")
+        except Exception as exc:
+            logging.warning("football-data.org falhou: %s. Tentando TheSportsDB...", exc)
 
     logging.info("Buscando partidas de %s via TheSportsDB", settings.target_date)
     sportsdb = SportsDbClient()

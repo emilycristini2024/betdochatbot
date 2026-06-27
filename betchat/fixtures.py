@@ -5,6 +5,7 @@ from typing import Any
 
 from .settings import Settings, get_current_datetime
 from .football_api import FootballApiClient, unavailable_technical_metrics, LEAGUE_NAMES
+from .football_data import FootballDataClient
 from .sportsdb import SportsDbClient
 
 # Palavras-chave que indicam que o usuário quer jogos do dia
@@ -88,10 +89,30 @@ def get_fixtures_for_chat(
                 return result, "football_api"
             else:
                 logging.info(
-                    "API-Football retornou 0 jogos para %s, tentando TheSportsDB", target_date
+                    "API-Football retornou 0 jogos para %s, tentando football-data.org",
+                    target_date,
                 )
         except Exception as exc:
-            logging.warning("API-Football falhou (%s), usando TheSportsDB como fallback", exc)
+            logging.warning("API-Football falhou (%s), tentando football-data.org", exc)
+
+    if settings.football_data_api_key:
+        try:
+            football_data = FootballDataClient(
+                api_key=settings.football_data_api_key,
+                timezone_name=settings.timezone,
+            )
+            fixtures = football_data.get_matches_for_date(target_date)
+            if fixtures:
+                result = fixtures[:15]
+                logging.info(
+                    "football-data.org retornou %d jogos para %s",
+                    len(result),
+                    target_date,
+                )
+                return result, "football_data"
+            logging.info("football-data.org retornou 0 jogos para %s", target_date)
+        except Exception as exc:
+            logging.warning("football-data.org falhou (%s), usando TheSportsDB como fallback", exc)
 
     logging.info("Buscando jogos via TheSportsDB para %s", target_date)
     sportsdb = SportsDbClient()

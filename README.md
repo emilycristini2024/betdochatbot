@@ -31,6 +31,7 @@ LLM_PROVIDER=groq
 LLM_API_KEY=
 LLM_BASE_URL=https://api.groq.com/openai/v1
 RAPIDAPI_KEY=
+FOOTBALL_DATA_API_KEY=
 ```
 
 ## Como descobrir o chat do Telegram
@@ -83,6 +84,8 @@ Se preferir não manter um servidor ligado o tempo todo, GitHub Actions agendado
 O plano gratuito da API-Football costuma ser limitado. Por isso, o script usa `MAX_FIXTURES` para evitar consumir cotas demais ao buscar estatísticas e odds.
 
 Para economizar requisições, o script busca os jogos do dia em uma chamada única e filtra as ligas localmente. Mesmo assim, estatísticas por time e odds por jogo ainda consomem cota, então `MAX_FIXTURES` e `REQUEST_DELAY_SECONDS` ajudam a controlar uso. No plano grátis, vale começar com `MAX_FIXTURES=3` ou `5`.
+
+`FOOTBALL_DATA_API_KEY` e opcional. Quando configurada, a aplicacao tenta usar a football-data.org depois da API-Football e antes da TheSportsDB, aproveitando jogos, status, placar e escalacoes quando a fonte disponibilizar esses dados.
 
 ## Modelo padrão
 

@@ -15,6 +15,7 @@ class Settings:
     llm_base_url: str
     rapidapi_key: str
     rapidapi_host: str
+    football_data_api_key: str
     llm_model: str
     timezone: str
     target_date: str
@@ -64,6 +65,7 @@ def load_settings() -> Settings:
         llm_base_url=os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1").strip(),
         rapidapi_key=os.getenv("RAPIDAPI_KEY", "").strip(),
         rapidapi_host=os.getenv("RAPIDAPI_HOST", "v3.football.api-sports.io").strip(),
+        football_data_api_key=os.getenv("FOOTBALL_DATA_API_KEY", "").strip(),
         llm_model=os.getenv("LLM_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct").strip(),
         timezone=tz,
         target_date=target_date,

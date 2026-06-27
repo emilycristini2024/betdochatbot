@@ -11,6 +11,7 @@ from .football_api import (
     build_analysis_payload,
     normalize_fixture_lineups,
 )
+from .football_data import FootballDataClient
 from .sportsdb import SportsDbClient
 from .llm import ask_llm_for_morning_report, ask_llm_for_reminder, sanitize_public_analysis_message
 from .telegram_bot import send_to_telegram, send_to_telegram_sync
@@ -47,6 +48,24 @@ def get_scheduled_fixtures(settings: Settings, target_date: str) -> list[dict[st
         except Exception as exc:
             logging.warning("API-Football falhou ao enriquecer jogos: %s. Usando TheSportsDB...", exc)
 
+    if settings.football_data_api_key:
+        try:
+            football_data = FootballDataClient(
+                api_key=settings.football_data_api_key,
+                timezone_name=settings.timezone,
+            )
+            fixtures = football_data.get_matches_for_date(target_date)
+            if fixtures:
+                logging.info(
+                    "football-data.org: %d jogos para %s",
+                    len(fixtures),
+                    target_date,
+                )
+                return fixtures[:settings.max_fixtures]
+            logging.info("football-data.org sem jogos para %s. Usando TheSportsDB...", target_date)
+        except Exception as exc:
+            logging.warning("football-data.org falhou: %s. Usando TheSportsDB...", exc)
+
     sportsdb = SportsDbClient()
     fixtures = sportsdb.get_fixtures_for_date(target_date)
     logging.info("TheSportsDB: %d jogos para %s", len(fixtures), target_date)
@@ -56,7 +75,7 @@ def get_scheduled_fixtures(settings: Settings, target_date: str) -> list[dict[st
 def enrich_fixture_with_lineups(settings: Settings, fixture: dict[str, Any]) -> dict[str, Any]:
     fixture_id = fixture.get("fixture_id")
     if not settings.rapidapi_key or not fixture_id:
-        return fixture
+        return enrich_football_data_fixture_with_lineups(settings, fixture)
 
     api_client = FootballApiClient(
         api_key=settings.rapidapi_key,
@@ -77,6 +96,34 @@ def enrich_fixture_with_lineups(settings: Settings, fixture: dict[str, Any]) -> 
     enriched = {**fixture}
     enriched["official_lineups"] = normalize_fixture_lineups(lineups_payload)
     logging.info("Escalacoes oficiais adicionadas ao fixture %s", fixture_id)
+    return enriched
+
+
+def enrich_football_data_fixture_with_lineups(
+    settings: Settings,
+    fixture: dict[str, Any],
+) -> dict[str, Any]:
+    match_id = fixture.get("football_data_match_id")
+    if not settings.football_data_api_key or not match_id:
+        return fixture
+
+    football_data = FootballDataClient(
+        api_key=settings.football_data_api_key,
+        timezone_name=settings.timezone,
+    )
+
+    try:
+        refreshed = football_data.get_match(int(match_id))
+    except Exception as exc:
+        logging.warning("Nao foi possivel buscar jogo football-data.org %s: %s", match_id, exc)
+        return fixture
+
+    if not refreshed or not refreshed.get("official_lineups"):
+        logging.info("Escalacoes oficiais football-data.org ainda indisponiveis para match %s", match_id)
+        return fixture
+
+    enriched = {**fixture, **refreshed}
+    logging.info("Escalacoes oficiais football-data.org adicionadas ao match %s", match_id)
     return enriched
 
 

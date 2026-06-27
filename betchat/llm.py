@@ -60,9 +60,12 @@ def ask_llm_for_chat_reply(
 
     if fixtures_context:
         fixtures_json = json.dumps(fixtures_context, ensure_ascii=False, indent=2)
-        source_label = (
-            "TheSportsDB (agenda oficial)" if fixtures_source == "thesportsdb" else "API-Football"
-        )
+        source_labels = {
+            "thesportsdb": "TheSportsDB (agenda oficial)",
+            "football_data": "football-data.org",
+            "football_api": "API-Football",
+        }
+        source_label = source_labels.get(fixtures_source, fixtures_source)
         date_label = target_date or "data solicitada"
         messages.append(
             {

@@ -65,7 +65,10 @@ POLITICA DE CONFIANCA
 
 BETCHAT_DATA_GUARDRAILS = """
 ADAPTACAO AO BETCHAT
-- O JSON pode vir da API-Football ou da TheSportsDB.
+- O JSON pode vir da API-Football, football-data.org ou TheSportsDB.
+- Quando a football-data.org for a fonte, use agenda, status, placar,
+  competicao, fase e escalacoes somente se esses campos vierem no JSON.
+  Nao presuma xG, odds, finalizacoes ou estatisticas avancadas.
 - Quando a TheSportsDB for a fonte, normalmente havera apenas agenda; nesse
   caso, classifique como dados insuficientes para aposta.
 - Campos marcados como "Informacao nao disponivel no momento." devem ser
