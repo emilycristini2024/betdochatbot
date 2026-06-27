@@ -22,9 +22,9 @@ def ask_llm_for_predictions(
 ) -> str:
     client = OpenAI(api_key=api_key, base_url=base_url)
     user_prompt = (
-        "Analise as partidas abaixo e retorne os melhores palpites no formato pedido.\n\n"
-        "Use xG, posse de bola e finalizacoes quando existirem no JSON. "
-        "Se estiverem indisponiveis, informe isso sem inventar dados.\n\n"
+        "Execute o prompt master para as partidas abaixo no formato solicitado.\n"
+        "Use apenas os dados do JSON e trate campos indisponiveis como lacunas.\n"
+        "Se nao houver escalacao oficial confirmada, nao recomende aposta pre-jogo.\n\n"
         f"{json.dumps(cleaned_payload, ensure_ascii=False, indent=2)}"
     )
     response = client.chat.completions.create(
@@ -64,24 +64,27 @@ def ask_llm_for_chat_reply(
             "TheSportsDB (agenda oficial)" if fixtures_source == "thesportsdb" else "API-Football"
         )
         date_label = target_date or "data solicitada"
-        messages.append({
-            "role": "user",
-            "content": (
-                f"DATA DOS JOGOS: {date_label}\n"
-                f"FONTE: {source_label}\n\n"
-                f"{fixtures_json}\n\n"
-                f"Analise cada um dos {len(fixtures_context)} jogos acima. "
-                f"Todos são do dia {date_label}. "
-                f"Use xG, posse de bola e finalizacoes quando existirem no JSON; "
-                f"se estiverem indisponiveis, informe isso sem inventar."
-            ),
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    f"DATA DOS JOGOS: {date_label}\n"
+                    f"FONTE: {source_label}\n\n"
+                    f"{fixtures_json}\n\n"
+                    f"Analise cada um dos {len(fixtures_context)} jogos acima. "
+                    f"Todos sao do dia {date_label}. "
+                    f"Use somente os campos do JSON. Se xG, posse de bola, finalizacoes, "
+                    f"odds ou escalacoes estiverem indisponiveis, informe a lacuna e nao invente. "
+                    f"Sem escalacao oficial confirmada, use SEM ENTRADA."
+                ),
+            }
+        )
     else:
         messages.append({"role": "user", "content": user_message})
 
     response = client.chat.completions.create(model=model, messages=messages)
     content = response.choices[0].message.content or ""
-    return content.strip() or "Não consegui responder agora. Tente novamente em instantes."
+    return content.strip() or "Nao consegui responder agora. Tente novamente em instantes."
 
 
 def ask_llm_for_morning_report(
@@ -105,9 +108,10 @@ def ask_llm_for_morning_report(
                     f"DATA: {today}\n"
                     f"JOGOS DO DIA ({len(fixtures[:max_fixtures])} partidas):\n"
                     f"{fixtures_json}\n\n"
-                    f"Use xG, posse de bola e finalizacoes quando os campos estiverem disponiveis. "
-                    f"Quando vierem como indisponiveis, declare a indisponibilidade e nao invente.\n"
-                    f"Gere o relatório matinal com os palpites do dia."
+                    f"Gere o relatorio matinal como triagem estatistica. "
+                    f"Use apenas os dados do JSON. Quando campos vierem como indisponiveis, "
+                    f"declare a lacuna e nao invente. Sem escalacao oficial confirmada, "
+                    f"use SEM ENTRADA e marque para monitorar perto do inicio."
                 ),
             },
         ],
@@ -140,18 +144,18 @@ def ask_llm_for_reminder(
                 "content": (
                     f"Jogo: {home} x {away}\n"
                     f"Liga: {league}\n"
-                    f"Horário: {kickoff}\n\n"
+                    f"Horario: {kickoff}\n\n"
                     f"RELATORIO MATINAL DO DIA (memoria para consistencia):\n"
                     f"{morning_report_context}\n\n"
                     f"EVIDENCIAS OBJETIVAS CONFIRMADAS: {evidence_count}\n"
-                    f"DADOS DISPONÍVEIS DA API:\n{fixture_json}\n\n"
+                    f"DADOS DISPONIVEIS DA API:\n{fixture_json}\n\n"
                     f"Para qualquer dado ausente, resuma a lacuna no status dos dados sem listar campos vazios.\n"
-                    f"Se a recomendação mudar em relação ao Relatório Matinal, explique o dado novo confirmado.\n"
-                    f"NÃO invente nenhuma informação. Gere a análise pré-jogo."
+                    f"Se a recomendacao mudar em relacao ao relatorio matinal, explique o dado novo confirmado.\n"
+                    f"Sem escalacao oficial confirmada, use SEM ENTRADA. Nao invente nenhuma informacao."
                 ),
             },
         ],
-        max_tokens=600,
+        max_tokens=1200,
     )
     content = response.choices[0].message.content or ""
     return sanitize_public_analysis_message(content.strip())
@@ -159,14 +163,28 @@ def ask_llm_for_reminder(
 
 def sanitize_public_analysis_message(message: str) -> str:
     internal_markers = (
+        "PROMPT MASTER",
+        "REGRAS ABSOLUTAS",
         "REGRAS INTERNAS",
         "REGRAS IMPORTANTES",
-        "REGRAS DE SEGURANÇA",
+        "REGRAS DE SEGURANCA",
+        "FLUXO ANALITICO",
+        "ADAPTACAO AO BETCHAT",
+        "POLITICA DE CONFIANCA",
         "ANTES DE FINALIZAR",
-        "verificação interna obrigatória",
+        "verificacao interna obrigatoria",
     )
     public_section_starts = (
-        "⏰", "⚽", "🏆", "📌", "📊", "🎯", "🧠", "⚠️ Gestão de risco",
+        "JOGO EM BREVE",
+        "STATUS DOS DADOS",
+        "LEITURA PRE-JOGO",
+        "RECOMENDACAO",
+        "JUSTIFICATIVA",
+        "Gestao de risco",
+        "[",
+        "TOP 3",
+        "RESUMO DO DIA",
+        "MULTIPLAS",
     )
 
     cleaned_lines: list[str] = []
