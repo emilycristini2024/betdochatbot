@@ -12,6 +12,7 @@ from .football_api import (
     normalize_fixture_lineups,
 )
 from .football_data import FootballDataClient
+from .fixtures import filter_future_fixtures
 from .sportsdb import SportsDbClient
 from .llm import ask_llm_for_morning_report, ask_llm_for_reminder, sanitize_public_analysis_message
 from .telegram_bot import send_to_telegram, send_to_telegram_sync
@@ -336,13 +337,15 @@ def send_morning_report(
     settings: Settings,
     apscheduler: "BackgroundScheduler | None" = None,
 ) -> None:
-    today = get_current_datetime(settings.timezone).strftime("%Y-%m-%d")
+    now = get_current_datetime(settings.timezone)
+    today = now.strftime("%Y-%m-%d")
     logging.info("Gerando relatório matinal para %s", today)
 
     fixtures = get_scheduled_fixtures(settings, today)
+    fixtures = filter_future_fixtures(fixtures, settings.timezone, now)
 
     if not fixtures:
-        message = f"📋 Relatório matinal {today}\n\nNenhuma partida encontrada nas ligas configuradas."
+        message = f"📋 Relatório matinal {today}\n\nNenhuma partida futura encontrada nas ligas configuradas."
         send_to_telegram_sync(settings.telegram_token, settings.telegram_chat_id, message)
         return
 

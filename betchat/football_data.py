@@ -50,7 +50,12 @@ class FootballDataClient:
         matches = payload.get("matches") or []
         if not isinstance(matches, list):
             return []
-        return [self.normalize_match(match) for match in matches]
+        normalized_matches = [self.normalize_match(match) for match in matches]
+        return [
+            match
+            for match in normalized_matches
+            if self.match_matches_local_date(match, target_date)
+        ]
 
     def get_match(self, match_id: int) -> dict[str, Any] | None:
         payload = self.get(f"/matches/{match_id}")
@@ -155,3 +160,9 @@ class FootballDataClient:
             "number": player.get("shirtNumber"),
             "position": player.get("position"),
         }
+
+    def match_matches_local_date(self, match: dict[str, Any], target_date: str) -> bool:
+        kickoff = str(match.get("kickoff") or "")
+        if not kickoff:
+            return True
+        return kickoff.startswith(target_date)

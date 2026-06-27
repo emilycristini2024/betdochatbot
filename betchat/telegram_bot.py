@@ -5,7 +5,13 @@ from telegram import Bot, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from .settings import Settings, get_current_datetime
-from .fixtures import get_fixtures_for_chat, message_wants_fixtures, extract_date_from_message
+from .fixtures import (
+    extract_date_from_message,
+    get_fixtures_for_chat,
+    get_next_fixtures_for_chat,
+    message_wants_fixtures,
+    message_wants_next_fixture,
+)
 from .llm import ask_llm_for_chat_reply
 
 
@@ -115,22 +121,37 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     fixtures_context = None
     fixtures_source = "football_api"
     target_date = None
+    wants_next_fixture = message_wants_next_fixture(user_text)
 
     if message_wants_fixtures(user_text):
-        target_date = extract_date_from_message(
-            user_text,
-            get_current_datetime(settings.timezone).strftime("%Y-%m-%d"),
-            settings.timezone,
-        )
-        logging.info("Buscando jogos para o chat: %s", target_date)
-        fixtures_context, fixtures_source = await asyncio.to_thread(
-            get_fixtures_for_chat, settings, target_date
-        )
+        if wants_next_fixture:
+            logging.info("Buscando proximos jogos para o chat")
+            fixtures_context, fixtures_source, target_date = await asyncio.to_thread(
+                get_next_fixtures_for_chat, settings
+            )
+        else:
+            target_date = extract_date_from_message(
+                user_text,
+                get_current_datetime(settings.timezone).strftime("%Y-%m-%d"),
+                settings.timezone,
+            )
+            logging.info("Buscando jogos para o chat: %s", target_date)
+            fixtures_context, fixtures_source = await asyncio.to_thread(
+                get_fixtures_for_chat, settings, target_date
+            )
         if fixtures_context:
             logging.info(
                 "Encontrados %d jogos via %s para %s",
                 len(fixtures_context), fixtures_source, target_date,
             )
+        else:
+            not_found_message = (
+                "Nao encontrei proximos jogos futuros nas fontes conectadas."
+                if wants_next_fixture
+                else f"Nao encontrei partidas para {target_date} nas fontes conectadas."
+            )
+            await update.message.reply_text(not_found_message)
+            return
 
     try:
         reply = await asyncio.to_thread(

@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
@@ -51,6 +52,24 @@ class SportsDbClient:
             logging.warning("TheSportsDB eventsnextleague(%s) falhou: %s", league_id, exc)
             return []
 
+    def get_next_fixtures(self) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        for league_id in SPORTSDB_LEAGUE_IDS:
+            league_events = self.get_next_fixtures_by_league(league_id)
+            for event in league_events:
+                event_id = str(event.get("idEvent", ""))
+                if event_id in seen_ids:
+                    continue
+                normalized = self._normalize_event(event)
+                result.append(normalized)
+                if event_id:
+                    seen_ids.add(event_id)
+
+        logging.info("TheSportsDB proximos jogos combinado: %d jogos", len(result))
+        return result
+
     def get_fixtures_for_date(self, target_date: str) -> list[dict[str, Any]]:
         """
         Estratégia combinada:
@@ -69,9 +88,10 @@ class SportsDbClient:
         for e in day_fixtures:
             if e.get("dateEvent", "") == target_date:
                 normalized = self._normalize_event(e)
-                result.append(normalized)
-                if normalized.get("event_id"):
-                    seen_ids.add(str(normalized["event_id"]))
+                if self._fixture_matches_local_date(normalized, target_date):
+                    result.append(normalized)
+                    if normalized.get("event_id"):
+                        seen_ids.add(str(normalized["event_id"]))
 
         logging.info("Complementando com eventsnextleague para %s...", target_date)
         for league_id in SPORTSDB_LEAGUE_IDS:
@@ -80,14 +100,23 @@ class SportsDbClient:
                 event_date = event.get("dateEvent", "")
                 event_id = str(event.get("idEvent", ""))
                 if event_date == target_date and event_id not in seen_ids:
-                    result.append(self._normalize_event(event))
-                    seen_ids.add(event_id)
+                    normalized = self._normalize_event(event)
+                    if self._fixture_matches_local_date(normalized, target_date):
+                        result.append(normalized)
+                        seen_ids.add(event_id)
 
         logging.info(
             "TheSportsDB total combinado: %d jogos para %s",
             len(result), target_date,
         )
         return result
+
+    def _fixture_matches_local_date(self, fixture: dict[str, Any], target_date: str) -> bool:
+        kickoff = str(fixture.get("kickoff") or "")
+        match = re.search(r"\d{4}-\d{2}-\d{2}", kickoff)
+        if not match:
+            return True
+        return match.group(0) == target_date
 
     def _normalize_event(self, event: dict[str, Any]) -> dict[str, Any]:
         time_utc = event.get("strTime") or event.get("strTimeLocal") or ""
