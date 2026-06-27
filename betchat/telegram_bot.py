@@ -7,6 +7,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 from .fixtures import (
     extract_date_from_message,
+    filter_future_fixtures,
     get_fixtures_for_chat,
     get_next_fixtures_for_chat,
     message_wants_fixtures,
@@ -127,9 +128,10 @@ async def build_fixtures_reply(
             settings,
         )
     else:
+        now = get_current_datetime(settings.timezone)
         target_date = extract_date_from_message(
             user_text,
-            get_current_datetime(settings.timezone).strftime("%Y-%m-%d"),
+            now.strftime("%Y-%m-%d"),
             settings.timezone,
         )
         logging.info("Buscando jogos para o chat: %s", target_date)
@@ -137,6 +139,11 @@ async def build_fixtures_reply(
             get_fixtures_for_chat,
             settings,
             target_date,
+        )
+        fixtures_context = filter_future_fixtures(
+            fixtures_context,
+            settings.timezone,
+            now,
         )
 
     if not fixtures_context:
@@ -211,6 +218,30 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await reply_with_chunks(message, reply)
 
 
+async def channel_post_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.channel_post
+    if not message or not message.text:
+        return
+
+    command = message.text.strip().split(maxsplit=1)[0].split("@", 1)[0].lower()
+    if command not in {"/jogos", "/proximo", "/proximos"}:
+        return
+
+    settings: Settings = context.application.bot_data["settings"]
+    await message.chat.send_action("typing")
+
+    try:
+        if command == "/jogos":
+            reply = await build_fixtures_reply(settings, "jogos de hoje", False)
+        else:
+            reply = await build_fixtures_reply(settings, "proximo jogo", True)
+    except Exception as exc:
+        logging.error("Erro ao processar comando no canal %s: %s", command, exc)
+        reply = "Ocorreu um erro ao buscar os jogos. Tente novamente em instantes."
+
+    await reply_with_chunks(message, reply)
+
+
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
     bot_username: str | None = context.application.bot_data.get("bot_username")
@@ -266,6 +297,7 @@ def run_chat_bot(settings: Settings) -> None:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler(["proximo", "proximos"], next_command))
     application.add_handler(CommandHandler("jogos", today_command))
+    application.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POST & filters.TEXT, channel_post_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
     logging.info("Iniciando modo chat por polling")
     application.run_polling(
