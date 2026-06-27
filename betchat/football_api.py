@@ -5,6 +5,7 @@ from typing import Any
 import requests
 
 API_BASE_URL = "https://v3.football.api-sports.io"
+RAPIDAPI_FOOTBALL_BASE_URL = "https://api-football-v1.p.rapidapi.com/v3"
 
 LEAGUE_NAMES = {
     39: "Premier League",
@@ -28,16 +29,25 @@ class FootballApiClient:
     def __init__(self, api_key: str, host: str, request_delay_seconds: float = 0.0) -> None:
         self.session = requests.Session()
         self.request_delay_seconds = request_delay_seconds
-        self.session.headers.update(
-            {
+        self.base_url = self._get_base_url(host)
+        self.session.headers.update(self._get_headers(api_key, host))
+
+    def _get_base_url(self, host: str) -> str:
+        if "rapidapi.com" in host:
+            return RAPIDAPI_FOOTBALL_BASE_URL
+        return API_BASE_URL
+
+    def _get_headers(self, api_key: str, host: str) -> dict[str, str]:
+        if "rapidapi.com" in host:
+            return {
                 "x-rapidapi-key": api_key,
                 "x-rapidapi-host": host,
             }
-        )
+        return {"x-apisports-key": api_key}
 
     def get(self, path: str, params: dict[str, Any]) -> Any:
         response = self.session.get(
-            f"{API_BASE_URL}{path}",
+            f"{self.base_url}{path}",
             params=params,
             timeout=30,
         )
@@ -55,6 +65,8 @@ class FootballApiClient:
             error_msg = str(errors)
             if "suspended" in error_msg.lower() or "access" in error_msg.lower():
                 raise FootballApiError(f"Erro de acesso à API-Football: {error_msg}")
+
+            raise FootballApiError(f"Erro da API-Football: {error_msg}")
 
         return payload.get("response", [])
 
@@ -74,6 +86,10 @@ class FootballApiClient:
 
     def get_fixtures_for_date(self, target_date: str, timezone: str) -> list[dict[str, Any]]:
         response = self.get("/fixtures", {"date": target_date, "timezone": timezone})
+        return response if isinstance(response, list) else []
+
+    def get_next_fixtures(self, timezone: str, limit: int = 15) -> list[dict[str, Any]]:
+        response = self.get("/fixtures", {"next": limit, "timezone": timezone})
         return response if isinstance(response, list) else []
 
     def get_team_statistics(self, team_id: int, league_id: int, season: int) -> dict[str, Any]:

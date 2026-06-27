@@ -161,6 +161,15 @@ def normalize_api_football_fixture(fixture: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def describe_source_exception(exc: Exception) -> str:
+    message = str(exc).replace("\n", " ").strip()
+    if not message:
+        return exc.__class__.__name__
+    if len(message) > 140:
+        message = f"{message[:137]}..."
+    return f"{exc.__class__.__name__}: {message}"
+
+
 def get_fixtures_for_chat(
     settings: Settings,
     target_date: str,
@@ -238,6 +247,33 @@ def get_next_api_football_fixtures(
         request_delay_seconds=0.5,
     )
     collected: list[dict[str, Any]] = []
+
+    try:
+        raw_next_fixtures = api_client.get_next_fixtures(settings.timezone, limit=15)
+        normalized_next_fixtures = [
+            normalize_api_football_fixture(fixture)
+            for fixture in raw_next_fixtures
+        ]
+        future_next_fixtures = filter_future_fixtures(
+            normalized_next_fixtures,
+            settings.timezone,
+            now,
+        )
+        if future_next_fixtures:
+            return future_next_fixtures
+        if normalized_next_fixtures:
+            logging.warning(
+                "API-Football retornou %d proximos jogos, mas nenhum horario passou no filtro futuro. "
+                "Usando lista bruta.",
+                len(normalized_next_fixtures),
+            )
+            return sorted(
+                normalized_next_fixtures,
+                key=lambda fixture: parse_fixture_kickoff(fixture.get("kickoff"), settings.timezone)
+                or now,
+            )
+    except Exception as exc:
+        logging.warning("API-Football next falhou: %s", exc)
 
     for days_ahead in range(max_days_ahead + 1):
         target_date = (now + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
@@ -328,3 +364,45 @@ def get_next_fixtures_for_chat(
         max_days_ahead,
     )
     return [], "football_api", current_date
+
+
+def get_sources_diagnostics(settings: Settings, max_results: int = 5) -> list[str]:
+    now = get_current_datetime(settings.timezone)
+    today = now.strftime("%Y-%m-%d")
+    lines: list[str] = []
+
+    if settings.rapidapi_key:
+        try:
+            api_client = FootballApiClient(
+                api_key=settings.rapidapi_key,
+                host=settings.rapidapi_host,
+                request_delay_seconds=0.5,
+            )
+            fixtures = api_client.get_next_fixtures(settings.timezone, limit=max_results)
+            lines.append(f"- API-Football teste: {len(fixtures)} proximos jogos")
+        except Exception as exc:
+            lines.append(f"- API-Football teste: erro ({describe_source_exception(exc)})")
+    else:
+        lines.append("- API-Football teste: sem chave")
+
+    if settings.football_data_api_key:
+        try:
+            football_data = FootballDataClient(
+                api_key=settings.football_data_api_key,
+                timezone_name=settings.timezone,
+            )
+            fixtures = football_data.get_matches_for_date(today)
+            lines.append(f"- football-data.org teste: {len(fixtures)} jogos para {today}")
+        except Exception as exc:
+            lines.append(f"- football-data.org teste: erro ({describe_source_exception(exc)})")
+    else:
+        lines.append("- football-data.org teste: sem chave")
+
+    try:
+        sportsdb = SportsDbClient()
+        fixtures = sportsdb.get_next_fixtures(limit=max_results)
+        lines.append(f"- TheSportsDB teste: {len(fixtures)} proximos jogos")
+    except Exception as exc:
+        lines.append(f"- TheSportsDB teste: erro ({describe_source_exception(exc)})")
+
+    return lines

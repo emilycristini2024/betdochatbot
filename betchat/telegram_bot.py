@@ -10,6 +10,7 @@ from .fixtures import (
     filter_future_fixtures,
     get_fixtures_for_chat,
     get_next_fixtures_for_chat,
+    get_sources_diagnostics,
     message_wants_fixtures,
     message_wants_next_fixture,
 )
@@ -87,6 +88,11 @@ def build_sources_status(settings: Settings) -> str:
     )
 
 
+def build_sources_status_with_diagnostics(settings: Settings) -> str:
+    diagnostics = get_sources_diagnostics(settings)
+    return f"{build_sources_status(settings)}\n\nTeste rapido:\n" + "\n".join(diagnostics)
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
     if not message:
@@ -97,7 +103,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/help - mostra esta ajuda\n"
         "/proximo - busca proximos jogos futuros\n"
         "/jogos - lista jogos de hoje\n"
-        "/status - mostra fontes conectadas\n\n"
+        "/status - testa fontes conectadas\n\n"
         "No privado ou grupo, tambem pode escrever: jogos de hoje, jogos de amanha, "
         "proximo jogo, apostas de hoje ou uma partida especifica.\n\n"
         "Em grupo, me mencione com @Betchatdo_bot ou responda uma mensagem minha."
@@ -235,7 +241,9 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     settings: Settings = context.application.bot_data["settings"]
-    await reply_with_chunks(message, build_sources_status(settings))
+    await message.chat.send_action("typing")
+    reply = await asyncio.to_thread(build_sources_status_with_diagnostics, settings)
+    await reply_with_chunks(message, reply)
 
 
 async def channel_post_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -252,7 +260,7 @@ async def channel_post_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     try:
         if command == "/status":
-            reply = build_sources_status(settings)
+            reply = await asyncio.to_thread(build_sources_status_with_diagnostics, settings)
         elif command == "/jogos":
             reply = await build_fixtures_reply(settings, "jogos de hoje", False)
         else:
