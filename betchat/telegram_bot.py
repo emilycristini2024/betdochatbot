@@ -84,7 +84,8 @@ def build_sources_status(settings: Settings) -> str:
         "Fontes conectadas:\n"
         f"- API-Football: {'configurada' if settings.rapidapi_key else 'nao configurada'}\n"
         f"- football-data.org: {'configurada' if settings.football_data_api_key else 'nao configurada'}\n"
-        "- TheSportsDB: fallback gratuito ativo"
+        "- TheSportsDB: fallback gratuito ativo\n"
+        "- StatsBomb Open Data: base historica gratuita"
     )
 
 

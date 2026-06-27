@@ -64,6 +64,7 @@ def ask_llm_for_chat_reply(
             "thesportsdb": "TheSportsDB (agenda oficial)",
             "football_data": "football-data.org",
             "football_api": "API-Football",
+            "statsbomb_open_data": "StatsBomb Open Data (base historica)",
         }
         source_label = source_labels.get(fixtures_source, fixtures_source)
         date_label = target_date or "data solicitada"

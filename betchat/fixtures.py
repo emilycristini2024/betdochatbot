@@ -9,6 +9,7 @@ from .football_api import FootballApiClient, LEAGUE_NAMES, unavailable_technical
 from .football_data import FootballDataClient
 from .settings import Settings, get_current_datetime
 from .sportsdb import SportsDbClient
+from .statsbomb_open_data import StatsBombOpenDataClient
 
 FIXTURES_KEYWORDS = [
     "jogos", "partidas", "hoje", "amanha", "manha", "tarde", "noite",
@@ -230,7 +231,17 @@ def get_fixtures_for_chat(
     logging.info("Buscando jogos via TheSportsDB para %s", target_date)
     sportsdb = SportsDbClient()
     fixtures = sportsdb.get_fixtures_for_date(target_date)
-    return fixtures, "thesportsdb"
+    if fixtures:
+        return fixtures, "thesportsdb"
+
+    if target_date <= get_current_datetime(settings.timezone).strftime("%Y-%m-%d"):
+        logging.info("Buscando jogos historicos via StatsBomb Open Data para %s", target_date)
+        statsbomb = StatsBombOpenDataClient()
+        statsbomb_fixtures = statsbomb.get_matches_for_date(target_date)
+        if statsbomb_fixtures:
+            return statsbomb_fixtures, "statsbomb_open_data"
+
+    return [], "thesportsdb"
 
 
 def get_next_api_football_fixtures(
@@ -404,5 +415,16 @@ def get_sources_diagnostics(settings: Settings, max_results: int = 5) -> list[st
         lines.append(f"- TheSportsDB teste: {len(fixtures)} proximos jogos")
     except Exception as exc:
         lines.append(f"- TheSportsDB teste: erro ({describe_source_exception(exc)})")
+
+    try:
+        statsbomb = StatsBombOpenDataClient()
+        summary = statsbomb.get_dataset_summary()
+        lines.append(
+            "- StatsBomb Open Data teste: "
+            f"{summary['competition_seasons']} competicoes/temporadas historicas; "
+            "sem agenda futura"
+        )
+    except Exception as exc:
+        lines.append(f"- StatsBomb Open Data teste: erro ({describe_source_exception(exc)})")
 
     return lines
